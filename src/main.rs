@@ -356,7 +356,7 @@ fn extract_index_roots(params: &serde_json::Value) -> Vec<PathBuf> {
         .and_then(|v| v.get("workspaceRoot"))
         .and_then(|v| v.as_str())
     {
-        push_unique_root(&mut roots, PathBuf::from(ws_root));
+        push_unique_root(&mut roots, common::path_from_input(ws_root));
     }
 
     if let Some(root_entries) = params.get("roots").and_then(|v| v.as_array()) {
@@ -392,14 +392,9 @@ fn extract_index_roots(params: &serde_json::Value) -> Vec<PathBuf> {
 }
 
 fn uri_to_path(uri: &str) -> Option<PathBuf> {
-    if let Some(path_str) = uri.strip_prefix("file:///") {
-        return Some(PathBuf::from(path_str));
+    if let Some(path) = common::uri_to_path(uri) {
+        return Some(path);
     }
-
-    if let Some(path_str) = uri.strip_prefix("file://") {
-        return Some(PathBuf::from(path_str));
-    }
-
     if !uri.contains("://") {
         return Some(PathBuf::from(uri));
     }
@@ -538,18 +533,7 @@ fn resolve_tool_path_candidate(raw: &str) -> Option<PathBuf> {
         return None;
     }
 
-    let mut path = if raw.starts_with("file://") {
-        uri_to_path(raw)?
-    } else {
-        PathBuf::from(raw)
-    };
-
-    if !path.is_absolute() {
-        let cwd = std::env::current_dir().ok()?;
-        path = cwd.join(path);
-    }
-
-    existing_anchor_for_path(path)
+    existing_anchor_for_path(common::resolve_tool_path(raw))
 }
 
 fn existing_anchor_for_path(path: PathBuf) -> Option<PathBuf> {

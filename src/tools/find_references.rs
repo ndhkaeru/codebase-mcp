@@ -45,10 +45,10 @@ fn execute_blocking(args: Value) -> Result<Value> {
         .map(|arr| {
             arr.iter()
                 .filter_map(|item| item.as_str())
-                .map(PathBuf::from)
+                .map(crate::common::resolve_tool_path)
                 .collect()
         })
-        .unwrap_or_else(|| vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))]);
+        .unwrap_or_else(|| vec![crate::common::default_tool_root()]);
 
     if !search_paths.iter().any(|path| path.exists()) {
         return Err(anyhow::anyhow!(

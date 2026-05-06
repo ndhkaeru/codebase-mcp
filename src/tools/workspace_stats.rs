@@ -4,7 +4,6 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
 use tokio::task;
 
 /// Max files to stat before returning a partial result.
@@ -105,7 +104,7 @@ fn execute_blocking(args: Value) -> Result<Value> {
         .get("path")
         .and_then(|v| v.as_str())
         .context("Missing path")?;
-    let path = PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
 
     if !path.exists() || !path.is_dir() {
         return Err(anyhow::anyhow!(

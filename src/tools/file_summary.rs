@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
 fn detect_language(ext: &str) -> &'static str {
@@ -62,7 +61,7 @@ pub async fn execute(args: &Value) -> Result<Value> {
         .get("path")
         .and_then(|v| v.as_str())
         .context("Missing path")?;
-    let path = PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
 
     if !path.exists() || !path.is_file() {
         return Err(anyhow::anyhow!(

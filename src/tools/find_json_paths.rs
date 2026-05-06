@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
 
 use crate::tools::read_file::decode_fuzzy;
 
@@ -63,7 +62,7 @@ fn load_json_input(args: &Value) -> Result<(Value, &'static str, String)> {
         .get("path")
         .and_then(|v| v.as_str())
         .context("Either path or json_text is required")?;
-    let path = PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
     if !path.exists() || !path.is_file() {
         return Err(anyhow::anyhow!(
             "File does not exist or is not a file: {}",

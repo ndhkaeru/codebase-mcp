@@ -1,9 +1,37 @@
 use codebase_mcp::tools::{
-    fuzzy_find, project_map, read_file, read_snippets, read_symbol_body, text_search,
+    self, fuzzy_find, project_map, read_file, read_snippets, read_symbol_body, text_search,
 };
 use serde_json::json;
 use std::fs;
 use tempfile::tempdir;
+
+#[tokio::test]
+async fn test_git_related_tools_are_not_exposed_or_dispatchable() {
+    let removed_tools = [
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "get_semantic_diff",
+    ];
+    let listed_tools = tools::list_tools();
+
+    for removed_tool in removed_tools {
+        assert!(
+            !listed_tools
+                .iter()
+                .any(|tool| tool.get("name").and_then(|v| v.as_str()) == Some(removed_tool)),
+            "{removed_tool} should not be exposed"
+        );
+
+        let result = tools::call_tool(json!({
+            "name": removed_tool,
+            "arguments": {}
+        }))
+        .await;
+        assert!(result.is_err(), "{removed_tool} should not dispatch");
+    }
+}
 
 #[tokio::test]
 async fn test_text_search_supports_explicit_modes_and_preserves_raw_line_text() {
@@ -161,6 +189,76 @@ async fn test_read_file_range_and_snippets_report_truncation_metadata() {
 }
 
 #[tokio::test]
+async fn test_read_snippets_reports_batch_continuations_and_skipped_requests() {
+    let dir = tempdir().unwrap();
+    let first = dir.path().join("first.txt");
+    let second = dir.path().join("second.txt");
+    fs::write(&first, "alpha\nbeta\ngamma\ndelta\n").unwrap();
+    fs::write(&second, "epsilon\nzeta\neta\ntheta\n").unwrap();
+
+    let result = read_snippets::execute(&json!({
+        "requests": [
+            {
+                "path": first.to_str().unwrap(),
+                "start_line": 1,
+                "end_line": 4
+            },
+            {
+                "path": second.to_str().unwrap(),
+                "start_line": 1,
+                "end_line": 4
+            }
+        ],
+        "max_total_bytes": 12
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(result.get("has_more").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        result
+            .get("batch_limits")
+            .and_then(|v| v.get("max_total_bytes"))
+            .and_then(|v| v.as_u64()),
+        Some(12)
+    );
+
+    let results = result.get("results").and_then(|v| v.as_array()).unwrap();
+    assert_eq!(results.len(), 2);
+
+    assert_eq!(
+        results[0].get("status").and_then(|v| v.as_str()),
+        Some("success")
+    );
+    assert_eq!(
+        results[0].get("truncated").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        results[0]
+            .get("continuation")
+            .and_then(|v| v.get("next_start_line"))
+            .and_then(|v| v.as_u64()),
+        Some(3)
+    );
+
+    assert_eq!(
+        results[1].get("status").and_then(|v| v.as_str()),
+        Some("skipped")
+    );
+    assert_eq!(
+        results[1].get("reason").and_then(|v| v.as_str()),
+        Some("batch_total_byte_limit_reached")
+    );
+
+    let continuations = result
+        .get("continuations")
+        .and_then(|v| v.as_array())
+        .unwrap();
+    assert_eq!(continuations.len(), 2);
+}
+
+#[tokio::test]
 async fn test_read_symbol_body_prefers_ast_and_supports_body_only_mode() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("lib.rs");
@@ -222,10 +320,14 @@ async fn test_project_map_and_fuzzy_find_return_polished_fields() {
     }))
     .await
     .unwrap();
+    let root_key = project_map_res
+        .get("root")
+        .and_then(|v| v.as_str())
+        .unwrap();
 
     let root_entries = project_map_res
         .get("tree_representation")
-        .and_then(|tree| tree.get(dir.path().to_str().unwrap()))
+        .and_then(|tree| tree.get(root_key))
         .and_then(|v| v.as_array())
         .unwrap();
     let src_entry = root_entries

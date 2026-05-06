@@ -2,7 +2,6 @@ use anyhow::Result;
 use ignore::WalkBuilder;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 pub fn schema() -> Value {
     json!({
@@ -22,7 +21,7 @@ pub fn schema() -> Value {
 
 pub async fn execute(args: &Value) -> Result<Value> {
     let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-    let path = PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
 
     if !path.exists() || !path.is_dir() {
         return Err(anyhow::anyhow!(
@@ -85,7 +84,7 @@ pub async fn execute(args: &Value) -> Result<Value> {
     // A simple representation of the first-level depth map for the agent.
     // Return flat directory grouped to not blow up Context Token Limit
     Ok(json!({
-        "root": path_str,
+        "root": path.to_string_lossy(),
         "max_depth": max_depth,
         "tree_representation": dir_map,
         "note": "Skipped hidden / git / node_modules inherently to preserve token context."

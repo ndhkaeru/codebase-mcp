@@ -4,14 +4,13 @@
 ![MCP](https://img.shields.io/badge/MCP-stdio-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-`codebase-mcp` is a local-first MCP server for real codebases. It exposes 37 tools for file access, search, symbols, diffs, git inspection, archive browsing, SQLite inspection, and safe write workflows with undo/redo history.
+`codebase-mcp` is a local-first MCP server for real codebases. It exposes 34 tools for file access, search, Markdown navigation, symbols, diffs, archive browsing, SQLite inspection, and safe write workflows with undo/redo history.
 
 ## Highlights
 
 - Local `stdio` MCP server that works with Cursor, Claude Desktop, VS Code, Cline, Roo, and similar clients.
 - Fast file and workspace navigation with structured JSON responses.
 - AST-aware code intelligence for Rust, Python, JavaScript, TypeScript, and TSX.
-- Git-aware inspection tools for status, diff, log, blame, and semantic change analysis.
 - Safe write tools with structured errors, history tracking, undo, and redo.
 - Built for large repositories where targeted reads are cheaper than dumping full files into context.
 
@@ -20,7 +19,6 @@
 ### Requirements
 
 - Rust stable
-- Git, if you want git-aware tools such as `git_status`, `git_diff`, `git_log`, and `git_blame`
 
 ### Build
 
@@ -41,10 +39,13 @@ Release binaries are written to:
 
 ### Optional Runtime Configuration
 
-Only logging is configured through environment variables:
-
 - `CODEBASE_MCP_LOG`: log level such as `error`, `warn`, `info`, `debug`, or `trace`
 - `CODEBASE_MCP_LOG_FILE`: write logs to a file instead of stderr
+- `CODEBASE_MCP_WORKSPACE_ROOT`: preferred workspace root for relative tool paths when the client does not send roots
+- `CODEBASE_MCP_INDEX_DIR`: override the persistent path-index cache directory
+- `CODEBASE_MCP_INDEX_STALE_SECS`: seconds before a completed path index is considered stale
+
+Legacy `TURBO_*` aliases are still accepted for the same settings.
 
 ## Client Configuration
 
@@ -112,6 +113,8 @@ Only logging is configured through environment variables:
 - `fuzzy_find`
 - `project_map`
 - `workspace_stats`
+- `markdown_outline`
+- `read_markdown_section`
 - `find_json_paths`
 - `extract_json_schema`
 
@@ -124,16 +127,11 @@ Only logging is configured through environment variables:
 - `list_imports`
 - `list_exports`
 - `get_call_graph`
-- `get_semantic_diff`
 - `compare_symbols`
 - `diff_two_snippets`
 
-### Git, Data, And Diagnostics
+### Data And Diagnostics
 
-- `git_status`
-- `git_diff`
-- `git_log`
-- `git_blame`
 - `sqlite_inspect`
 - `peek_archive`
 - `server_health`
@@ -162,10 +160,24 @@ Only logging is configured through environment variables:
 {
   "name": "read_snippets",
   "arguments": {
+    "max_total_bytes": 24000,
     "requests": [
       { "path": "/workspace/src/main.rs", "start_line": 1, "end_line": 80 },
       { "path": "/workspace/src/lib.rs", "start_line": 1, "end_line": 60 }
     ]
+  }
+}
+```
+
+### Jump to a Markdown section by heading
+
+```json
+{
+  "name": "read_markdown_section",
+  "arguments": {
+    "path": "/workspace/docs/architecture.md",
+    "heading_path": ["Runtime", "Reconnect Flow"],
+    "include_subsections": true
   }
 }
 ```
@@ -183,17 +195,6 @@ Only logging is configured through environment variables:
 }
 ```
 
-### Inspect git changes
-
-```json
-{
-  "name": "git_status",
-  "arguments": {
-    "repo_path": "/workspace"
-  }
-}
-```
-
 ### Batch related calls in one round-trip
 
 ```json
@@ -202,8 +203,8 @@ Only logging is configured through environment variables:
   "arguments": {
     "calls": [
       {
-        "tool": "git_status",
-        "args": { "repo_path": "/workspace" }
+        "tool": "file_summary",
+        "args": { "path": "/workspace/README.md" }
       },
       {
         "tool": "project_map",

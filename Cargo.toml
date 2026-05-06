@@ -1,6 +1,6 @@
 [package]
 name = "codebase-mcp"
-version = "0.1.0"
+version = "1.2.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "High-performance MCP server for filesystem and code intelligence workflows"
@@ -15,7 +15,6 @@ encoding_rs = "0.8.35"
 flate2 = "1.1.9"
 futures = "0.3.32"
 fuzzy-matcher = "0.3.7"
-git2 = { version = "0.20.4", features = ["vendored-libgit2", "vendored-openssl"] }
 glob = "0.3.3"
 grep-regex = "0.1.14"
 grep-searcher = "0.1.16"

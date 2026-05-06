@@ -1,6 +1,6 @@
 use codebase_mcp::tools::{
     compare_symbols, create_directory, diff_two_snippets, extract_json_schema, find_json_paths,
-    list_exports, list_imports, sqlite_inspect,
+    list_exports, list_imports, markdown_outline, read_markdown_section, sqlite_inspect,
 };
 use rusqlite::Connection;
 use serde_json::json;
@@ -173,6 +173,51 @@ async fn test_json_tools_extract_paths_and_schema() {
             .and_then(|v| v.as_str()),
         Some("object")
     );
+}
+
+#[tokio::test]
+async fn test_markdown_outline_and_section_reads_support_heading_navigation() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("guide.md");
+    fs::write(
+        &path,
+        "# Intro\nWelcome\n## Install\nStep A\n```md\n# Ignored\n```\n    # Indented code\n## Usage\nRun it\n# API\n## Usage\nAPI details\n",
+    )
+    .unwrap();
+
+    let outline = markdown_outline::execute(&json!({
+        "path": path.to_str().unwrap()
+    }))
+    .await
+    .unwrap();
+    assert_eq!(
+        outline.get("heading_count").and_then(|v| v.as_u64()),
+        Some(5)
+    );
+    assert_eq!(
+        outline.get("total_lines").and_then(|v| v.as_u64()),
+        Some(13)
+    );
+
+    let section = read_markdown_section::execute(&json!({
+        "path": path.to_str().unwrap(),
+        "heading_path": ["Intro", "Usage"],
+        "include_subsections": false
+    }))
+    .await
+    .unwrap();
+    let content = section.get("content").and_then(|v| v.as_str()).unwrap();
+    assert!(content.contains("## Usage"));
+    assert!(content.contains("Run it"));
+    assert!(!content.contains("Indented code"));
+    assert!(!content.contains("API details"));
+
+    let ambiguous = read_markdown_section::execute(&json!({
+        "path": path.to_str().unwrap(),
+        "heading": "Usage"
+    }))
+    .await;
+    assert!(ambiguous.is_err());
 }
 
 #[tokio::test]

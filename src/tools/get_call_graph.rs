@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use std::path::PathBuf;
 use tree_sitter::Node;
 
 use crate::tools::ast_support::{
@@ -32,7 +31,7 @@ pub async fn execute(args: &Value) -> Result<Value> {
         .and_then(|v| v.as_str())
         .context("Missing symbol")?;
 
-    let path = PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
     if !path.exists() || !path.is_file() {
         return Err(anyhow::anyhow!("File does not exist: {}", path_str));
     }

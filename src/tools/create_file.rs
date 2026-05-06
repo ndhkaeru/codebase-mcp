@@ -154,7 +154,7 @@ pub async fn execute(args: &Value) -> Result<Value> {
         ));
     }
 
-    let path = PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
     let (canonical_from_guard, tier, reason) = GUARD.check_path(&path);
     if tier == Tier::Blocked {
         return Ok(error_response(

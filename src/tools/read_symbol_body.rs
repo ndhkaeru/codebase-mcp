@@ -57,15 +57,15 @@ fn execute_blocking(args: Value) -> Result<Value> {
         .map(|arr| {
             arr.iter()
                 .filter_map(|item| item.as_str())
-                .map(PathBuf::from)
+                .map(crate::common::resolve_tool_path)
                 .collect()
         })
-        .unwrap_or_else(|| vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))]);
+        .unwrap_or_else(|| vec![crate::common::default_tool_root()]);
 
     let file_hint = args
         .get("file_hint")
         .and_then(|v| v.as_str())
-        .map(PathBuf::from);
+        .map(crate::common::resolve_tool_path);
 
     if let Some(file_hint) = &file_hint
         && (!file_hint.exists() || !file_hint.is_file())

@@ -3,7 +3,6 @@ use flate2::read::GzDecoder;
 use serde_json::{Value, json};
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
 
 fn normalize_archive_entry_path(raw: &str) -> String {
     raw.replace('\\', "/").trim_start_matches("./").to_string()
@@ -34,7 +33,7 @@ pub async fn execute(args: &Value) -> Result<Value> {
         .and_then(|v| v.as_str())
         .map(normalize_archive_entry_path);
 
-    let archive_path = PathBuf::from(archive_path_str);
+    let archive_path = crate::common::resolve_tool_path(archive_path_str);
     if !archive_path.exists() || !archive_path.is_file() {
         return Err(anyhow::anyhow!(
             "Archive file does not exist: {}",
