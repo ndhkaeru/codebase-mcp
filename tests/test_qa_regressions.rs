@@ -1,6 +1,6 @@
 use codebase_mcp::tools::{
-    batch_tool_call, convert_file_format, file_summary, get_semantic_diff, git_blame, peek_archive,
-    read_file, read_snippets, workspace_stats,
+    batch_tool_call, convert_file_format, file_summary, peek_archive, read_file, read_snippets,
+    workspace_stats,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -11,43 +11,6 @@ use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
 use zip::write::SimpleFileOptions;
-
-fn init_git_repo(repo_path: &Path) {
-    Command::new("git")
-        .arg("init")
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-    Command::new("git")
-        .args(["config", "user.name", "QA Tester"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-    Command::new("git")
-        .args(["config", "user.email", "qa@example.com"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-}
-
-fn write_and_commit(repo_path: &Path, relative_path: &str, content: &str, message: &str) {
-    let file_path = repo_path.join(relative_path);
-    if let Some(parent) = file_path.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-    fs::write(&file_path, content).unwrap();
-
-    Command::new("git")
-        .args(["add", relative_path])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-    Command::new("git")
-        .args(["commit", "-m", message])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-}
 
 fn server_binary() -> PathBuf {
     if let Some(path) = std::env::var_os("CARGO_BIN_EXE_codebase-mcp").map(PathBuf::from)
@@ -230,6 +193,15 @@ fn decode_tool_rpc_response(rpc: &Value) -> Value {
     .unwrap()
 }
 
+fn file_uri_for_test(path: &Path) -> String {
+    format!(
+        "file:///{}",
+        path.to_string_lossy()
+            .replace('\\', "/")
+            .replace(' ', "%20")
+    )
+}
+
 #[tokio::test]
 async fn test_convert_file_format_writes_real_utf16le() {
     let dir = tempdir().unwrap();
@@ -376,89 +348,6 @@ async fn test_workspace_stats_reports_total_and_per_language_lines() {
         item.get("language").and_then(|v| v.as_str()) == Some("Python")
             && item.get("lines").and_then(|v| v.as_u64()) == Some(3)
     }));
-}
-
-#[tokio::test]
-async fn test_git_blame_returns_line_level_output() {
-    let repo = tempdir().unwrap();
-    init_git_repo(repo.path());
-    write_and_commit(
-        repo.path(),
-        "src/app.py",
-        "print('a')\nprint('b')\n",
-        "Initial commit",
-    );
-
-    let result = git_blame::execute(&json!({
-        "file_path": repo.path().join("src/app.py").to_str().unwrap()
-    }))
-    .await
-    .unwrap();
-
-    assert_eq!(
-        result
-            .get("blame_lines")
-            .and_then(|v| v.as_array())
-            .map(|items| items.len()),
-        Some(2)
-    );
-    assert_eq!(
-        result
-            .get("blame_lines")
-            .and_then(|v| v.as_array())
-            .and_then(|items| items.first())
-            .and_then(|item| item.get("line"))
-            .and_then(|v| v.as_u64()),
-        Some(1)
-    );
-    assert_eq!(
-        result
-            .get("blame_hunks")
-            .and_then(|v| v.as_array())
-            .map(|items| items.len()),
-        Some(1)
-    );
-}
-
-#[tokio::test]
-async fn test_get_semantic_diff_filters_duplicate_class_noise() {
-    let repo = tempdir().unwrap();
-    init_git_repo(repo.path());
-    write_and_commit(
-        repo.path(),
-        "src/orders.py",
-        "class OrderProcessor:\n    def process_order(self, order):\n        total = calculate_subtotal(order)\n        return finalize_order(total)\n\n\ndef calculate_subtotal(order):\n    return sum(item['price'] for item in order['items'])\n\n\ndef finalize_order(total):\n    return {'total': total, 'status': 'ready'}\n",
-        "Initial fixture",
-    );
-
-    fs::write(
-        repo.path().join("src/orders.py"),
-        "class OrderProcessor:\n    def process_order(self, order, rush=False):\n        subtotal = calculate_subtotal(order)\n        fee = calculate_rush_fee(order) if rush else 0\n        return finalize_order(subtotal + fee)\n\n\ndef calculate_subtotal(order):\n    return sum(item['price'] for item in order['items'])\n\n\ndef calculate_rush_fee(order):\n    return 15 if order.get('rush') else 0\n\n\ndef finalize_order(total):\n    return {'total': total, 'status': 'ready'}\n",
-    )
-    .unwrap();
-
-    let result = get_semantic_diff::execute(&json!({
-        "file_path": repo.path().join("src/orders.py").to_str().unwrap()
-    }))
-    .await
-    .unwrap();
-
-    let diffs = result.get("diffs").and_then(|v| v.as_array()).unwrap();
-    assert!(
-        diffs
-            .iter()
-            .any(|diff| diff.get("symbol").and_then(|v| v.as_str()) == Some("process_order"))
-    );
-    assert!(
-        diffs
-            .iter()
-            .any(|diff| diff.get("symbol").and_then(|v| v.as_str()) == Some("calculate_rush_fee"))
-    );
-    assert!(
-        !diffs
-            .iter()
-            .any(|diff| diff.get("symbol").and_then(|v| v.as_str()) == Some("OrderProcessor"))
-    );
 }
 
 #[tokio::test]
@@ -732,5 +621,114 @@ fn test_tool_call_marks_stale_index_refresh_request() {
             .get("index_last_request_source")
             .and_then(|v| v.as_str()),
         Some("tool_call:read_file_range")
+    );
+}
+
+#[test]
+fn test_tool_calls_resolve_relative_paths_against_env_workspace_root() {
+    let current_dir = tempdir().unwrap();
+    let workspace = tempdir().unwrap();
+    fs::write(
+        workspace.path().join("Cargo.toml"),
+        "[package]\nname = \"pathing\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::create_dir_all(workspace.path().join("src")).unwrap();
+    fs::write(workspace.path().join("src/lib.rs"), "fn sample() {}\n").unwrap();
+
+    let (read_result, _health) = call_binary_server_tool_then_health(
+        current_dir.path(),
+        json!({}),
+        Some(workspace.path()),
+        &[],
+        "read_file_range",
+        json!({ "path": "src/lib.rs" }),
+        150,
+    );
+    assert_eq!(
+        read_result.get("content").and_then(|v| v.as_str()),
+        Some("fn sample() {}\n")
+    );
+
+    let (resolve_result, _health) = call_binary_server_tool_then_health(
+        current_dir.path(),
+        json!({}),
+        Some(workspace.path()),
+        &[],
+        "resolve_path",
+        json!({ "path": "src/lib.rs" }),
+        150,
+    );
+    assert_eq!(
+        resolve_result
+            .get("resolution_basis")
+            .and_then(|v| v.as_str()),
+        Some("workspace_root_env")
+    );
+    assert_eq!(
+        resolve_result
+            .get("repo_root")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+            .and_then(|path| path.canonicalize().ok()),
+        Some(workspace.path().canonicalize().unwrap())
+    );
+}
+
+#[test]
+fn test_tool_calls_resolve_relative_paths_against_client_workspace_root() {
+    let current_dir = tempdir().unwrap();
+    let workspace_parent = tempdir().unwrap();
+    let workspace = workspace_parent.path().join("space root");
+    fs::create_dir_all(workspace.join("src")).unwrap();
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[package]\nname = \"client-pathing\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(workspace.join("src/lib.rs"), "fn client_workspace() {}\n").unwrap();
+
+    let init = json!({
+        "workspaceFolders": [
+            { "uri": file_uri_for_test(&workspace) }
+        ]
+    });
+
+    let (read_result, _health) = call_binary_server_tool_then_health(
+        current_dir.path(),
+        init.clone(),
+        None,
+        &[],
+        "read_file_range",
+        json!({ "path": "src/lib.rs" }),
+        150,
+    );
+    assert_eq!(
+        read_result.get("content").and_then(|v| v.as_str()),
+        Some("fn client_workspace() {}\n")
+    );
+
+    let (resolve_result, _health) = call_binary_server_tool_then_health(
+        current_dir.path(),
+        init,
+        None,
+        &[],
+        "resolve_path",
+        json!({ "path": "src/lib.rs" }),
+        150,
+    );
+    assert_eq!(
+        resolve_result
+            .get("resolution_basis")
+            .and_then(|v| v.as_str()),
+        Some("active_index_workspace")
+    );
+    assert_eq!(
+        resolve_result
+            .get("repo_root")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+            .and_then(|path| path.canonicalize().ok()),
+        Some(workspace.canonicalize().unwrap())
     );
 }

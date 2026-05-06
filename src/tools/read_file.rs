@@ -3,7 +3,6 @@ use encoding_rs::{UTF_16BE, UTF_16LE, WINDOWS_1252};
 use serde_json::{Value, json};
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
 
 use crate::common::insert_object_field;
 
@@ -88,7 +87,7 @@ pub(crate) fn execute_sync(args: &Value) -> Result<Value> {
         .get("path")
         .and_then(|v| v.as_str())
         .context("Missing path")?;
-    let path = PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
 
     if !path.exists() || !path.is_file() {
         return Err(anyhow::anyhow!(

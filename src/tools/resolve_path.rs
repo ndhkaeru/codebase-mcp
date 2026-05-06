@@ -1,6 +1,5 @@
 use anyhow::Result;
 use serde_json::{Value, json};
-use std::path::PathBuf;
 
 pub fn schema() -> Value {
     json!({
@@ -24,11 +23,26 @@ pub async fn execute(args: &Value) -> Result<Value> {
         return Err(anyhow::anyhow!("Path cannot be empty"));
     }
 
-    let input_path = PathBuf::from(path_str);
-    let canonical = std::fs::canonicalize(&input_path).unwrap_or(input_path);
+    let raw_input_path = crate::common::path_from_input(path_str);
+    let (workspace_root, resolution_basis) = crate::common::preferred_workspace_root()
+        .map(|(root, source)| (Some(root), source))
+        .unwrap_or((None, "current_dir"));
+    let canonical = crate::common::resolve_tool_path(path_str);
+    let repo_root = crate::common::discover_workspace_root(&canonical);
 
     Ok(json!({
+        "input_path": path_str,
         "canonical_path": canonical.to_string_lossy(),
+        "input_was_relative": !raw_input_path.is_absolute() && !path_str.starts_with("file://"),
+        "resolution_basis": if path_str.starts_with("file://") {
+            "file_uri"
+        } else if raw_input_path.is_absolute() {
+            "absolute_input"
+        } else {
+            resolution_basis
+        },
+        "workspace_root": workspace_root.map(|root| root.to_string_lossy().to_string()),
+        "repo_root": repo_root.map(|root| root.to_string_lossy().to_string()),
         "tier": "Allowed",
         "is_accessible": true,
         "exists": canonical.exists(),

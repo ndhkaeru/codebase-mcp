@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
-use futures::future::join_all;
 use serde_json::{Value, json};
-use tokio::task;
 
+use crate::common::insert_object_field;
 use crate::tools::read_file;
 
 pub fn schema() -> Value {
@@ -25,8 +24,9 @@ pub fn schema() -> Value {
                             "include_line_numbers": { "type": "boolean" }
                         },
                         "required": ["path"]
-                    },
-                }
+                    }
+                },
+                "max_total_bytes": { "type": "integer" }
             },
             "required": ["requests"]
         }
@@ -38,50 +38,250 @@ pub async fn execute(args: &Value) -> Result<Value> {
         .get("requests")
         .and_then(|v| v.as_array())
         .context("Missing/Invalid 'requests' field")?;
+    let max_total_bytes = args
+        .get("max_total_bytes")
+        .and_then(|v| v.as_u64())
+        .map(|value| value as usize);
 
-    let jobs = requests.iter().map(|request| {
-        let request = request.clone();
-        task::spawn_blocking(move || execute_single_request(request))
-    });
+    let mut results = Vec::with_capacity(requests.len());
+    let mut continuations = Vec::new();
+    let mut total_content_bytes = 0usize;
+    let mut completed_requests = 0usize;
+    let mut errored_requests = 0usize;
+    let mut skipped_requests = 0usize;
+    let mut truncated_results = 0usize;
 
-    let results = join_all(jobs)
-        .await
-        .into_iter()
-        .map(|result| match result {
-            Ok(payload) => payload,
-            Err(err) => json!({
-                "path": "<unknown>",
-                "status": "error",
-                "error": format!("read_snippets worker failed: {}", err)
-            }),
-        })
-        .collect::<Vec<_>>();
+    for (request_index, request) in requests.iter().enumerate() {
+        let path = request
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<unknown>")
+            .to_string();
 
-    Ok(json!({ "results": results }))
+        let Some(remaining_budget) = remaining_budget(max_total_bytes, total_content_bytes) else {
+            let skipped = skipped_result(
+                request_index,
+                &path,
+                request,
+                "batch_total_byte_limit_reached",
+            );
+            continuations.push(skipped_result_continuation(request_index, &path, request));
+            results.push(skipped);
+            skipped_requests += 1;
+            continue;
+        };
+
+        let (effective_request, batch_limit_applied) =
+            apply_batch_byte_limit(request, max_total_bytes, remaining_budget);
+        let mut payload = execute_single_request(&effective_request, request_index);
+        if batch_limit_applied
+            && payload.get("status").and_then(|v| v.as_str()) == Some("success")
+            && payload
+                .get("returned_lines")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                == 0
+            && payload.get("truncated").and_then(|v| v.as_bool()) == Some(true)
+        {
+            payload = skipped_result(
+                request_index,
+                &path,
+                request,
+                "batch_total_byte_limit_reached",
+            );
+            continuations.push(skipped_result_continuation(request_index, &path, request));
+            skipped_requests += 1;
+            results.push(payload);
+            continue;
+        }
+        let content_bytes = payload
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(|content| content.len())
+            .unwrap_or(0);
+        total_content_bytes += content_bytes;
+
+        match payload.get("status").and_then(|v| v.as_str()) {
+            Some("success") => {
+                completed_requests += 1;
+                let continuation =
+                    build_truncation_continuation(request_index, &path, request, &payload);
+                if continuation.is_some() {
+                    truncated_results += 1;
+                }
+
+                if batch_limit_applied {
+                    insert_object_field(&mut payload, "batch_limit_applied", json!(true));
+                }
+
+                if let Some(continuation) = continuation {
+                    continuations.push(continuation.clone());
+                    insert_object_field(&mut payload, "continuation", continuation);
+                }
+            }
+            Some("error") => {
+                errored_requests += 1;
+            }
+            Some("skipped") => {
+                skipped_requests += 1;
+            }
+            _ => {}
+        }
+
+        results.push(payload);
+    }
+
+    Ok(json!({
+        "results": results,
+        "total_requests": requests.len(),
+        "completed_requests": completed_requests,
+        "errored_requests": errored_requests,
+        "skipped_requests": skipped_requests,
+        "truncated_results": truncated_results,
+        "has_more": !continuations.is_empty(),
+        "continuations": continuations,
+        "batch_limits": {
+            "max_total_bytes": max_total_bytes,
+            "total_content_bytes": total_content_bytes
+        }
+    }))
 }
 
-fn execute_single_request(request: Value) -> Value {
+fn remaining_budget(max_total_bytes: Option<usize>, used_bytes: usize) -> Option<usize> {
+    match max_total_bytes {
+        Some(limit) if used_bytes >= limit => None,
+        Some(limit) => Some(limit - used_bytes),
+        None => Some(usize::MAX),
+    }
+}
+
+fn apply_batch_byte_limit(
+    request: &Value,
+    max_total_bytes: Option<usize>,
+    remaining_budget: usize,
+) -> (Value, bool) {
+    let Some(_) = max_total_bytes else {
+        return (request.clone(), false);
+    };
+
+    let requested_max_bytes = request.get("max_bytes").and_then(|v| v.as_u64());
+    let effective_max_bytes = requested_max_bytes
+        .map(|value| (value as usize).min(remaining_budget))
+        .unwrap_or(remaining_budget);
+
+    let mut effective_request = request.clone();
+    insert_object_field(
+        &mut effective_request,
+        "max_bytes",
+        json!(effective_max_bytes.max(1)),
+    );
+
+    let batch_limit_applied = requested_max_bytes
+        .map(|value| effective_max_bytes < value as usize)
+        .unwrap_or(true);
+
+    (effective_request, batch_limit_applied)
+}
+
+fn execute_single_request(request: &Value, request_index: usize) -> Value {
     let path = request
         .get("path")
         .and_then(|v| v.as_str())
         .unwrap_or("<unknown>")
         .to_string();
 
-    match read_file::execute_sync(&request) {
+    let mut requested_range = json!({
+        "path": path,
+        "start_line": request.get("start_line").cloned().unwrap_or(Value::Null),
+        "end_line": request.get("end_line").cloned().unwrap_or(Value::Null),
+        "max_lines": request.get("max_lines").cloned().unwrap_or(Value::Null),
+        "max_bytes": request.get("max_bytes").cloned().unwrap_or(Value::Null),
+        "include_line_numbers": request.get("include_line_numbers").cloned().unwrap_or(json!(false))
+    });
+
+    match read_file::execute_sync(request) {
         Ok(Value::Object(mut object)) => {
             object.insert("path".to_string(), json!(path));
             object.insert("status".to_string(), json!("success"));
+            object.insert("request_index".to_string(), json!(request_index));
+            object.insert("requested_range".to_string(), requested_range);
             Value::Object(object)
         }
-        Ok(other) => json!({
-            "path": path,
-            "status": "success",
-            "result": other
-        }),
+        Ok(other) => {
+            insert_object_field(&mut requested_range, "raw_result", other);
+            json!({
+                "path": path,
+                "status": "success",
+                "request_index": request_index,
+                "requested_range": requested_range
+            })
+        }
         Err(err) => json!({
             "path": path,
             "status": "error",
+            "request_index": request_index,
+            "requested_range": requested_range,
             "error": err.to_string()
         }),
     }
+}
+
+fn build_truncation_continuation(
+    request_index: usize,
+    path: &str,
+    original_request: &Value,
+    payload: &Value,
+) -> Option<Value> {
+    if !payload
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    let next_start_line = payload.get("next_start_line").and_then(|v| v.as_u64())?;
+    let remaining_lines = payload
+        .get("omitted_lines")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let mut suggested_request = original_request.clone();
+    insert_object_field(&mut suggested_request, "path", json!(path));
+    insert_object_field(&mut suggested_request, "start_line", json!(next_start_line));
+
+    Some(json!({
+        "request_index": request_index,
+        "path": path,
+        "reason": "snippet_truncated",
+        "next_start_line": next_start_line,
+        "remaining_lines": remaining_lines,
+        "suggested_request": suggested_request
+    }))
+}
+
+fn skipped_result(request_index: usize, path: &str, request: &Value, reason: &str) -> Value {
+    json!({
+        "path": path,
+        "status": "skipped",
+        "request_index": request_index,
+        "reason": reason,
+        "requested_range": {
+            "path": path,
+            "start_line": request.get("start_line").cloned().unwrap_or(Value::Null),
+            "end_line": request.get("end_line").cloned().unwrap_or(Value::Null),
+            "max_lines": request.get("max_lines").cloned().unwrap_or(Value::Null),
+            "max_bytes": request.get("max_bytes").cloned().unwrap_or(Value::Null),
+            "include_line_numbers": request.get("include_line_numbers").cloned().unwrap_or(json!(false))
+        }
+    })
+}
+
+fn skipped_result_continuation(request_index: usize, path: &str, request: &Value) -> Value {
+    json!({
+        "request_index": request_index,
+        "path": path,
+        "reason": "batch_total_byte_limit_reached",
+        "suggested_request": request
+    })
 }

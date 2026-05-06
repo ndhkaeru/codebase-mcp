@@ -24,8 +24,10 @@ const LOG_FILE_ENV_NAMES: &[&str] = &["CODEBASE_MCP_LOG_FILE", "TURBO_LOG_FILE"]
 const WORKSPACE_ROOT_ENV_NAMES: &[&str] =
     &["CODEBASE_MCP_WORKSPACE_ROOT", "TURBO_FS_WORKSPACE_ROOT"];
 
-/// Maximum timeout for one tool call (seconds).
-const TOOL_TIMEOUT_SECS: u64 = 60;
+/// Default timeout for one tool call (seconds).
+const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 60;
+/// Maximum timeout a client can request for one tool call (seconds).
+const MAX_TOOL_TIMEOUT_SECS: u64 = 10 * 60;
 static INDEX_ROOTS: OnceLock<Vec<PathBuf>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +42,7 @@ enum TransportMode {
 async fn main() -> anyhow::Result<()> {
     let log_level = common::env_var(LOG_LEVEL_ENV_NAMES)
         .and_then(|s| s.parse().ok())
-        .unwrap_or(Level::DEBUG);
+        .unwrap_or(Level::INFO);
 
     if let Some(log_file_path) = common::env_var(LOG_FILE_ENV_NAMES) {
         let file = OpenOptions::new()
@@ -139,13 +141,18 @@ async fn main() -> anyhow::Result<()> {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("unknown")
                                 .to_string();
+                            let tool_timeout_secs = tool_call_timeout_secs(&params);
                             maybe_index_tool_workspaces(&tool_name, &params);
 
-                            debug!(tool = %tool_name, "-> tool call start");
+                            debug!(
+                                tool = %tool_name,
+                                timeout_s = tool_timeout_secs,
+                                "-> tool call start"
+                            );
                             let start = Instant::now();
 
                             match timeout(
-                                Duration::from_secs(TOOL_TIMEOUT_SECS),
+                                Duration::from_secs(tool_timeout_secs),
                                 tools::call_tool(params),
                             )
                             .await
@@ -187,7 +194,7 @@ async fn main() -> anyhow::Result<()> {
                                 Err(_) => {
                                     error!(
                                         tool = %tool_name,
-                                        timeout_s = TOOL_TIMEOUT_SECS,
+                                        timeout_s = tool_timeout_secs,
                                         "tool call timeout"
                                     );
                                     JsonRpcResponse::success(
@@ -198,7 +205,7 @@ async fn main() -> anyhow::Result<()> {
                                                 "type": "text",
                                                 "text": format!(
                                                     "Tool '{}' timed out after {}s. Try narrowing the search scope or using includes/excludes filters.",
-                                                    tool_name, TOOL_TIMEOUT_SECS
+                                                    tool_name, tool_timeout_secs
                                                 )
                                             }]
                                         }),
@@ -356,7 +363,7 @@ fn extract_index_roots(params: &serde_json::Value) -> Vec<PathBuf> {
         .and_then(|v| v.get("workspaceRoot"))
         .and_then(|v| v.as_str())
     {
-        push_unique_root(&mut roots, PathBuf::from(ws_root));
+        push_unique_root(&mut roots, common::path_from_input(ws_root));
     }
 
     if let Some(root_entries) = params.get("roots").and_then(|v| v.as_array()) {
@@ -392,14 +399,9 @@ fn extract_index_roots(params: &serde_json::Value) -> Vec<PathBuf> {
 }
 
 fn uri_to_path(uri: &str) -> Option<PathBuf> {
-    if let Some(path_str) = uri.strip_prefix("file:///") {
-        return Some(PathBuf::from(path_str));
+    if let Some(path) = common::uri_to_path(uri) {
+        return Some(path);
     }
-
-    if let Some(path_str) = uri.strip_prefix("file://") {
-        return Some(PathBuf::from(path_str));
-    }
-
     if !uri.contains("://") {
         return Some(PathBuf::from(uri));
     }
@@ -538,18 +540,7 @@ fn resolve_tool_path_candidate(raw: &str) -> Option<PathBuf> {
         return None;
     }
 
-    let mut path = if raw.starts_with("file://") {
-        uri_to_path(raw)?
-    } else {
-        PathBuf::from(raw)
-    };
-
-    if !path.is_absolute() {
-        let cwd = std::env::current_dir().ok()?;
-        path = cwd.join(path);
-    }
-
-    existing_anchor_for_path(path)
+    existing_anchor_for_path(common::resolve_tool_path(raw))
 }
 
 fn existing_anchor_for_path(path: PathBuf) -> Option<PathBuf> {
@@ -618,6 +609,24 @@ fn normalize_root_key(path: &Path) -> String {
     }
 }
 
+fn tool_call_timeout_secs(params: &Value) -> u64 {
+    let requested_seconds = params
+        .get("timeout_seconds")
+        .or_else(|| params.get("timeout_secs"))
+        .or_else(|| params.get("timeout_s"))
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            params
+                .get("timeout_ms")
+                .and_then(Value::as_u64)
+                .map(|millis| millis.saturating_add(999) / 1_000)
+        });
+
+    requested_seconds
+        .unwrap_or(DEFAULT_TOOL_TIMEOUT_SECS)
+        .clamp(DEFAULT_TOOL_TIMEOUT_SECS, MAX_TOOL_TIMEOUT_SECS)
+}
+
 fn looks_like_workspace_root(path: &Path) -> bool {
     if !path.exists() || !path.is_dir() {
         return false;
@@ -645,4 +654,31 @@ fn looks_like_workspace_root(path: &Path) -> bool {
     WORKSPACE_MARKERS
         .iter()
         .any(|marker| path.join(marker).exists())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn tool_timeout_defaults_to_sixty_seconds() {
+        assert_eq!(tool_call_timeout_secs(&json!({})), 60);
+    }
+
+    #[test]
+    fn tool_timeout_can_be_extended_and_is_capped() {
+        assert_eq!(
+            tool_call_timeout_secs(&json!({"timeout_seconds": 120})),
+            120
+        );
+        assert_eq!(tool_call_timeout_secs(&json!({"timeout_secs": 900})), 600);
+        assert_eq!(tool_call_timeout_secs(&json!({"timeout_ms": 90_001})), 91);
+    }
+
+    #[test]
+    fn tool_timeout_cannot_reduce_default() {
+        assert_eq!(tool_call_timeout_secs(&json!({"timeout_seconds": 10})), 60);
+        assert_eq!(tool_call_timeout_secs(&json!({"timeout_ms": 1_000})), 60);
+    }
 }

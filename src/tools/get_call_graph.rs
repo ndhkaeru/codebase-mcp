@@ -1,16 +1,16 @@
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use std::path::PathBuf;
 use tree_sitter::Node;
 
 use crate::tools::ast_support::{
-    DEFAULT_AST_FILE_SIZE_LIMIT, find_named_function_like, node_text, parse_supported_file,
+    DEFAULT_AST_FILE_SIZE_LIMIT, call_expression_name, find_named_function_like, is_call_node,
+    parse_supported_file,
 };
 
 pub fn schema() -> Value {
     json!({
         "name": "get_call_graph",
-        "description": "List outbound calls made from a function or symbol.",
+        "description": "List outbound calls made from a function or symbol using Tree-sitter AST support for Rust, JavaScript/TypeScript, Python, C/C++, Go, Java, C#, PHP, and Ruby.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -32,7 +32,7 @@ pub async fn execute(args: &Value) -> Result<Value> {
         .and_then(|v| v.as_str())
         .context("Missing symbol")?;
 
-    let path = PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
     if !path.exists() || !path.is_file() {
         return Err(anyhow::anyhow!("File does not exist: {}", path_str));
     }
@@ -60,14 +60,15 @@ pub async fn execute(args: &Value) -> Result<Value> {
 }
 
 fn find_outbound_calls(node: Node<'_>, source: &[u8], calls: &mut Vec<String>) {
-    if matches!(node.kind(), "call_expression" | "call" | "invocation")
-        && let Some(text) = node_text(node, source)
+    if is_call_node(node.kind())
+        && let Some(text) = call_expression_name(node, source)
+        && !text.is_empty()
     {
-        calls.push(text.lines().next().unwrap_or("").to_string());
+        calls.push(text);
     }
 
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
+    for child in node.named_children(&mut cursor) {
         find_outbound_calls(child, source, calls);
     }
 }

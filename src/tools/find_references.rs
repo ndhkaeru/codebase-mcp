@@ -7,7 +7,6 @@ use tokio::task;
 
 use crate::tools::ast_support::visit_candidate_code_files;
 
-const MAX_FILES_SCANNED: usize = 50_000;
 const MAX_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_RESULTS: usize = 200;
 
@@ -45,10 +44,10 @@ fn execute_blocking(args: Value) -> Result<Value> {
         .map(|arr| {
             arr.iter()
                 .filter_map(|item| item.as_str())
-                .map(PathBuf::from)
+                .map(crate::common::resolve_tool_path)
                 .collect()
         })
-        .unwrap_or_else(|| vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))]);
+        .unwrap_or_else(|| vec![crate::common::default_tool_root()]);
 
     if !search_paths.iter().any(|path| path.exists()) {
         return Err(anyhow::anyhow!(
@@ -71,11 +70,6 @@ fn execute_blocking(args: Value) -> Result<Value> {
 
     visit_candidate_code_files(&search_paths, None, None, |candidate| {
         if limit_reached {
-            return Ok(false);
-        }
-
-        if files_scanned >= MAX_FILES_SCANNED {
-            limit_reached = true;
             return Ok(false);
         }
 
@@ -127,6 +121,7 @@ fn execute_blocking(args: Value) -> Result<Value> {
         "total_returned": references.len(),
         "files_scanned": files_scanned,
         "files_skipped_non_code": files_skipped,
-        "limit_reached": limit_reached
+        "limit_reached": limit_reached,
+        "limit_reason": if limit_reached { Some("max_results") } else { None }
     }))
 }

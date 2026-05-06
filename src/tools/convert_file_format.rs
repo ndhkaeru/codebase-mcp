@@ -3,7 +3,6 @@ use encoding_rs::WINDOWS_1252;
 use serde_json::{Value, json};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::path::PathBuf;
 
 use crate::history::{attach_history_metadata, file_snapshot, no_history, record_change};
 use crate::tools::read_file::decode_fuzzy;
@@ -82,7 +81,7 @@ pub async fn execute(args: &Value) -> Result<Value> {
     if path_str.is_empty() {
         return Err(anyhow::anyhow!("Missing path argument"));
     }
-    let path = PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
 
     if !path.exists() || !path.is_file() {
         return Err(anyhow::anyhow!(

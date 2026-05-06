@@ -454,10 +454,18 @@ pub fn clear_history() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
     use tempfile::tempdir;
+
+    static HISTORY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn history_test_guard() -> MutexGuard<'static, ()> {
+        HISTORY_TEST_LOCK.lock().unwrap()
+    }
 
     #[test]
     fn record_change_clears_redo_and_limits_stack() {
+        let _guard = history_test_guard();
         clear_history();
         let dir = tempdir().unwrap();
         let path = dir.path().join("sample.txt");
@@ -493,6 +501,7 @@ mod tests {
 
     #[test]
     fn oversized_snapshot_is_skipped() {
+        let _guard = history_test_guard();
         clear_history();
         let path = PathBuf::from("large.txt");
         let oversized = vec![b'x'; MAX_TRACKED_SNAPSHOT_BYTES + 1];
@@ -509,6 +518,7 @@ mod tests {
 
     #[test]
     fn undo_redo_restores_file_state() {
+        let _guard = history_test_guard();
         clear_history();
         let dir = tempdir().unwrap();
         let path = dir.path().join("undo.txt");

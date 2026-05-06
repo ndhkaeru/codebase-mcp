@@ -26,7 +26,7 @@ pub async fn execute(args: &Value) -> Result<Value> {
         .get("path")
         .and_then(|v| v.as_str())
         .context("Missing path")?;
-    let path = std::path::PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
 
     let parsed = parse_supported_file(&path, DEFAULT_AST_FILE_SIZE_LIMIT, None)?
         .context("Unsupported extension for list_exports")?;
@@ -65,7 +65,7 @@ fn collect_exports_recursive(
     match language_kind {
         LanguageKind::Rust => collect_rust_export(node, source, exports),
         LanguageKind::JavaScript => collect_js_export(node, source, exports),
-        LanguageKind::Python => {}
+        _ => {}
     }
 
     let mut cursor = node.walk();

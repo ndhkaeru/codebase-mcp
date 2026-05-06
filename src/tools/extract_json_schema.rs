@@ -43,7 +43,8 @@ fn load_value(args: &Value, loader_response: &Value) -> Result<(&'static str, St
     let value = if let Some(json_text) = args.get("json_text").and_then(|v| v.as_str()) {
         serde_json::from_str(json_text)?
     } else if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
-        let content = std::fs::read_to_string(path)?;
+        let resolved_path = crate::common::resolve_tool_path(path);
+        let content = std::fs::read_to_string(&resolved_path)?;
         serde_json::from_str(&content)?
     } else {
         return Err(anyhow::anyhow!("Either path or json_text is required"));

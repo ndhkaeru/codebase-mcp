@@ -34,6 +34,23 @@ async fn test_read_file_range_with_encoding() {
     assert_eq!(content2, "Line 4\nLine 5\n");
     assert_eq!(res2.get("total_lines").unwrap().as_u64().unwrap(), 5);
 
+    let uri_path = dir.path().join("uri file.txt");
+    std::fs::write(&uri_path, "uri payload\n").unwrap();
+    let file_uri = format!(
+        "file:///{}",
+        uri_path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace(' ', "%20")
+    );
+    let uri_res = read_file::execute(&json!({ "path": file_uri }))
+        .await
+        .unwrap();
+    assert_eq!(
+        uri_res.get("content").and_then(|v| v.as_str()),
+        Some("uri payload\n")
+    );
+
     let win1252_path = dir.path().join("win1252.txt");
     let mut f2 = File::create(&win1252_path).unwrap();
     f2.write_all(b"\xC7a va\nline 2").unwrap();

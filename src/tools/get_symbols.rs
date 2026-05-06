@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use std::path::PathBuf;
 
 use crate::tools::ast_support::{
     DEFAULT_AST_FILE_SIZE_LIMIT, collect_symbols, parse_supported_file,
@@ -9,7 +8,7 @@ use crate::tools::ast_support::{
 pub fn schema() -> Value {
     json!({
         "name": "get_symbols",
-        "description": "Extract AST symbols from a source file.",
+        "description": "Extract Tree-sitter AST symbols from Rust, JavaScript/TypeScript, Python, C/C++, Go, Java, C#, PHP, and Ruby source files.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -25,7 +24,7 @@ pub async fn execute(args: &Value) -> Result<Value> {
         .get("path")
         .and_then(|v| v.as_str())
         .context("Missing/empty path")?;
-    let path = PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
 
     if !path.exists() || !path.is_file() {
         return Err(anyhow::anyhow!(

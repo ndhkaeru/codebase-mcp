@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
-use std::path::PathBuf;
 
 use crate::common::insert_object_field;
 
@@ -29,7 +28,7 @@ pub async fn execute(args: &Value) -> Result<Value> {
         .get("path")
         .and_then(|v| v.as_str())
         .context("Missing path")?;
-    let path = PathBuf::from(path_str);
+    let path = crate::common::resolve_tool_path(path_str);
     if !path.exists() || !path.is_file() {
         return Err(anyhow::anyhow!(
             "File does not exist or is not a file: {}",
