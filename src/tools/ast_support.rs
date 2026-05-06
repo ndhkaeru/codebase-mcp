@@ -24,6 +24,13 @@ pub enum LanguageKind {
     Rust,
     JavaScript,
     Python,
+    C,
+    Cpp,
+    Go,
+    Java,
+    CSharp,
+    Php,
+    Ruby,
 }
 
 pub struct ParsedAstFile {
@@ -34,23 +41,62 @@ pub struct ParsedAstFile {
 }
 
 pub fn parse_language_filter(raw: Option<&str>) -> Result<Option<LanguageKind>> {
-    match raw {
-        None => Ok(None),
-        Some("rust") | Some("rs") => Ok(Some(LanguageKind::Rust)),
-        Some("python") | Some("py") => Ok(Some(LanguageKind::Python)),
-        Some("javascript") | Some("js") | Some("jsx") | Some("ts") | Some("tsx")
-        | Some("typescript") => Ok(Some(LanguageKind::JavaScript)),
-        Some(other) => Err(anyhow::anyhow!("Unsupported language '{}'", other)),
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+
+    match raw.to_ascii_lowercase().as_str() {
+        "rust" | "rs" => Ok(Some(LanguageKind::Rust)),
+        "python" | "py" => Ok(Some(LanguageKind::Python)),
+        "javascript" | "js" | "jsx" | "ts" | "tsx" | "typescript" => {
+            Ok(Some(LanguageKind::JavaScript))
+        }
+        "c" => Ok(Some(LanguageKind::C)),
+        "cpp" | "c++" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Ok(Some(LanguageKind::Cpp)),
+        "go" | "golang" => Ok(Some(LanguageKind::Go)),
+        "java" => Ok(Some(LanguageKind::Java)),
+        "csharp" | "c#" | "cs" => Ok(Some(LanguageKind::CSharp)),
+        "php" => Ok(Some(LanguageKind::Php)),
+        "ruby" | "rb" => Ok(Some(LanguageKind::Ruby)),
+        other => Err(anyhow::anyhow!("Unsupported language '{}'", other)),
     }
 }
 
 pub fn detect_language(path: &Path) -> Option<(LanguageKind, &'static str, Language)> {
-    let ext = path.extension().and_then(|value| value.to_str())?;
-    match ext {
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())?
+        .to_ascii_lowercase();
+    match ext.as_str() {
         "rs" => Some((
             LanguageKind::Rust,
             "Rust",
             tree_sitter_rust::LANGUAGE.into(),
+        )),
+        "c" => Some((LanguageKind::C, "C", tree_sitter_c::LANGUAGE.into())),
+        "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx" | "inc" | "inl" => {
+            Some((LanguageKind::Cpp, "C++", tree_sitter_cpp::LANGUAGE.into()))
+        }
+        "go" => Some((LanguageKind::Go, "Go", tree_sitter_go::LANGUAGE.into())),
+        "java" => Some((
+            LanguageKind::Java,
+            "Java",
+            tree_sitter_java::LANGUAGE.into(),
+        )),
+        "cs" => Some((
+            LanguageKind::CSharp,
+            "C#",
+            tree_sitter_c_sharp::LANGUAGE.into(),
+        )),
+        "php" => Some((
+            LanguageKind::Php,
+            "PHP",
+            tree_sitter_php::LANGUAGE_PHP.into(),
+        )),
+        "rb" => Some((
+            LanguageKind::Ruby,
+            "Ruby",
+            tree_sitter_ruby::LANGUAGE.into(),
         )),
         "js" | "jsx" | "mjs" | "cjs" => Some((
             LanguageKind::JavaScript,
@@ -240,7 +286,135 @@ pub fn child_field_text<'a>(node: &Node<'a>, field: &str, source: &'a [u8]) -> O
 }
 
 pub fn declaration_name<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
-    child_field_text(node, "name", source).or_else(|| child_field_text(node, "function", source))
+    child_field_text(node, "name", source)
+        .or_else(|| child_field_text(node, "function", source))
+        .or_else(|| child_field_text(node, "method", source))
+        .or_else(|| {
+            node.child_by_field_name("declarator")
+                .and_then(|declarator| declarator_name(declarator, source))
+        })
+}
+
+fn declarator_name<'a>(node: Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    if is_identifier_like_node(node.kind()) {
+        return node_text(node, source);
+    }
+
+    for field in ["declarator", "name", "function", "method"] {
+        if let Some(field_node) = node.child_by_field_name(field)
+            && let Some(name) = declarator_name(field_node, source)
+        {
+            return Some(name);
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some(name) = declarator_name(child, source) {
+            return Some(name);
+        }
+    }
+
+    None
+}
+
+fn is_identifier_like_node(kind: &str) -> bool {
+    matches!(
+        kind,
+        "identifier"
+            | "field_identifier"
+            | "type_identifier"
+            | "namespace_identifier"
+            | "qualified_identifier"
+            | "qualified_name"
+            | "scoped_identifier"
+            | "scoped_type_identifier"
+            | "generic_name"
+            | "constant"
+            | "name"
+            | "variable_name"
+            | "property_identifier"
+            | "destructor_name"
+            | "operator_name"
+            | "operator"
+    )
+}
+
+pub fn symbol_name_matches(symbol: &str, name: &str) -> bool {
+    let symbol = symbol.trim();
+    let name = name.trim();
+    if name == symbol {
+        return true;
+    }
+
+    qualified_basename(name) == symbol
+}
+
+fn qualified_basename(name: &str) -> &str {
+    name.rsplit([':', '.', '\\'])
+        .find(|part| !part.is_empty())
+        .unwrap_or(name)
+        .trim_start_matches('~')
+}
+
+pub fn call_expression_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if let Some(function) = child_field_text(&node, "function", source) {
+        return Some(normalize_call_target(function));
+    }
+
+    if let Some(method) = child_field_text(&node, "method", source) {
+        if let Some(receiver) = child_field_text(&node, "receiver", source) {
+            return Some(format!(
+                "{}.{}",
+                normalize_call_target(receiver),
+                normalize_call_target(method)
+            ));
+        }
+        return Some(normalize_call_target(method));
+    }
+
+    if let Some(name) = child_field_text(&node, "name", source) {
+        if let Some(object) = child_field_text(&node, "object", source) {
+            return Some(format!(
+                "{}.{}",
+                normalize_call_target(object),
+                normalize_call_target(name)
+            ));
+        }
+        return Some(normalize_call_target(name));
+    }
+
+    node_text(node, source).map(|text| {
+        let first_line = text.lines().next().unwrap_or("");
+        normalize_call_target(first_line)
+    })
+}
+
+pub fn is_call_node(kind: &str) -> bool {
+    matches!(
+        kind,
+        "call_expression"
+            | "call"
+            | "invocation"
+            | "invocation_expression"
+            | "method_invocation"
+            | "function_call_expression"
+            | "member_call_expression"
+            | "nullsafe_member_call_expression"
+            | "scoped_call_expression"
+            | "object_creation_expression"
+            | "explicit_constructor_invocation"
+    )
+}
+
+fn normalize_call_target(raw: &str) -> String {
+    raw.trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches('(')
+        .to_string()
 }
 
 pub fn first_line_preview(node: Node<'_>, source: &[u8], max_bytes: usize) -> String {
@@ -267,10 +441,31 @@ pub fn is_symbol_node(kind: &str) -> bool {
             | "type_item"
             | "type_alias"
             | "function_definition"
+            | "method_declaration"
+            | "constructor_declaration"
+            | "destructor_declaration"
             | "class_definition"
             | "function_declaration"
             | "class_declaration"
+            | "interface_declaration"
+            | "record_declaration"
+            | "annotation_type_declaration"
+            | "enum_declaration"
+            | "namespace_declaration"
+            | "namespace_definition"
+            | "class_specifier"
+            | "struct_specifier"
+            | "union_specifier"
+            | "enum_specifier"
+            | "type_spec"
+            | "delegate_declaration"
+            | "trait_declaration"
+            | "property_declaration"
             | "method_definition"
+            | "method"
+            | "singleton_method"
+            | "class"
+            | "module"
             | "arrow_function"
     )
 }
@@ -278,17 +473,27 @@ pub fn is_symbol_node(kind: &str) -> bool {
 pub fn is_function_like_node(kind: &str) -> bool {
     matches!(
         kind,
-        "function_item" | "function_definition" | "function_declaration" | "method_definition"
+        "function_item"
+            | "function_definition"
+            | "function_declaration"
+            | "method_definition"
+            | "method_declaration"
+            | "constructor_declaration"
+            | "destructor_declaration"
+            | "method"
+            | "singleton_method"
     )
 }
 
 pub fn find_named_symbol_node<'a>(node: Node<'a>, source: &[u8], symbol: &str) -> Option<Node<'a>> {
-    if is_symbol_node(node.kind()) && declaration_name(&node, source) == Some(symbol) {
+    if is_symbol_node(node.kind())
+        && declaration_name(&node, source).is_some_and(|name| symbol_name_matches(symbol, name))
+    {
         return Some(node);
     }
 
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
+    for child in node.named_children(&mut cursor) {
         if let Some(found) = find_named_symbol_node(child, source, symbol) {
             return Some(found);
         }
@@ -302,12 +507,14 @@ pub fn find_named_function_like<'a>(
     source: &[u8],
     symbol: &str,
 ) -> Option<Node<'a>> {
-    if is_function_like_node(node.kind()) && declaration_name(&node, source) == Some(symbol) {
+    if is_function_like_node(node.kind())
+        && declaration_name(&node, source).is_some_and(|name| symbol_name_matches(symbol, name))
+    {
         return Some(node);
     }
 
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
+    for child in node.named_children(&mut cursor) {
         if let Some(found) = find_named_function_like(child, source, symbol) {
             return Some(found);
         }
@@ -330,10 +537,11 @@ fn collect_symbols_recursive(
 ) {
     let mut current_parent = parent_name.clone();
 
-    if is_symbol_node(node.kind()) {
+    if is_symbol_node(node.kind())
+        && let Some(name) = declaration_name(&node, source)
+    {
         let start_pos = node.start_position();
         let end_pos = node.end_position();
-        let name = declaration_name(&node, source).unwrap_or("<anonymous>");
 
         symbols.push(json!({
             "name": name,
@@ -348,7 +556,7 @@ fn collect_symbols_recursive(
     }
 
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
+    for child in node.named_children(&mut cursor) {
         collect_symbols_recursive(child, source, symbols, current_parent.clone());
     }
 }

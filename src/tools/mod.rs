@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 mod ast_support;
 mod diff_support;
 mod markdown_support;
+mod path_filters;
 
 pub mod batch_tool_call;
 pub mod compare_symbols;

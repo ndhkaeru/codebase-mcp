@@ -356,3 +356,32 @@ async fn test_project_map_and_fuzzy_find_return_polished_fields() {
     );
     assert!(first_match.get("score").and_then(|v| v.as_i64()).is_some());
 }
+
+#[tokio::test]
+async fn test_project_map_reports_output_child_truncation() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+    fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+
+    let result = project_map::execute(&json!({
+        "path": dir.path().to_str().unwrap(),
+        "max_children_per_dir": 1
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.get("limit_reached").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        result.get("limit_reason").and_then(|v| v.as_str()),
+        Some("max_children_per_dir")
+    );
+    assert_eq!(
+        result
+            .get("truncated_directory_count")
+            .and_then(|v| v.as_u64()),
+        Some(1)
+    );
+}

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use tokio::task;
 
 use crate::tools::ast_support::{
-    DEFAULT_AST_FILE_SIZE_LIMIT, find_named_symbol_node, parse_language_filter,
+    DEFAULT_AST_FILE_SIZE_LIMIT, detect_language, find_named_symbol_node, parse_language_filter,
     parse_supported_file, visit_candidate_code_files,
 };
 use crate::tools::read_file::decode_fuzzy;
@@ -18,7 +18,7 @@ const HEURISTIC_WINDOW_LINES: usize = 80;
 pub fn schema() -> Value {
     json!({
         "name": "read_symbol_body",
-        "description": "Read a symbol body with AST-first resolution and heuristic fallback.",
+        "description": "Read a symbol body with AST-first resolution for Rust, JavaScript/TypeScript, Python, C/C++, Go, Java, C#, PHP, and Ruby, then heuristic fallback for other code-like files.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -82,6 +82,9 @@ fn execute_blocking(args: Value) -> Result<Value> {
         file_hint.as_deref(),
         language_filter,
         |candidate| {
+            if detect_language(candidate).is_none() {
+                return Ok(true);
+            }
             if let Some(ast_match) = try_ast_match(candidate, symbol, include_signature)? {
                 ast_result = Some(json!({
                     "symbol": symbol,
@@ -104,7 +107,7 @@ fn execute_blocking(args: Value) -> Result<Value> {
     }
 
     let definition_pattern = Regex::new(&format!(
-        r"(?i)\b(fn|pub\s+fn|def|class|struct|enum|trait|interface|type|function|const|let|var|void|int|bool|auto|static)\s+{}\b",
+        r"(?i)\b(fn|pub\s+fn|func|def|class|struct|enum|trait|interface|type|function|const|let|var|void|int|bool|auto|static)\s+{}\b",
         regex::escape(symbol)
     ))
     .context("Invalid heuristic definition regex")?;

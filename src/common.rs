@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const WORKSPACE_ROOT_ENV_NAMES: &[&str] =
     &["CODEBASE_MCP_WORKSPACE_ROOT", "TURBO_FS_WORKSPACE_ROOT"];
+const WALK_THREADS_ENV_NAMES: &[&str] = &["CODEBASE_MCP_WALK_THREADS", "TURBO_FS_WALK_THREADS"];
 const WORKSPACE_MARKERS: &[&str] = &[
     ".git",
     "Cargo.toml",
@@ -205,4 +206,16 @@ pub fn resolve_tool_path(raw: &str) -> PathBuf {
     }
 
     canonicalize_if_exists(default_tool_root().join(path))
+}
+
+pub fn bounded_walk_threads() -> usize {
+    if let Some(raw) = env_var(WALK_THREADS_ENV_NAMES)
+        && let Ok(value) = raw.parse::<usize>()
+    {
+        return value.clamp(1, 64);
+    }
+
+    std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get().clamp(1, 4))
+        .unwrap_or(2)
 }

@@ -65,7 +65,7 @@ fn collect_exports_recursive(
     match language_kind {
         LanguageKind::Rust => collect_rust_export(node, source, exports),
         LanguageKind::JavaScript => collect_js_export(node, source, exports),
-        LanguageKind::Python => {}
+        _ => {}
     }
 
     let mut cursor = node.walk();

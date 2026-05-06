@@ -10,7 +10,7 @@
 
 - Local `stdio` MCP server that works with Cursor, Claude Desktop, VS Code, Cline, Roo, and similar clients.
 - Fast file and workspace navigation with structured JSON responses.
-- AST-aware code intelligence for Rust, Python, JavaScript, TypeScript, and TSX.
+- AST-aware code intelligence for Rust, Python, JavaScript/TypeScript, C/C++, Go, Java, C#, PHP, and Ruby.
 - Safe write tools with structured errors, history tracking, undo, and redo.
 - Built for large repositories where targeted reads are cheaper than dumping full files into context.
 
@@ -39,13 +39,30 @@ Release binaries are written to:
 
 ### Optional Runtime Configuration
 
-- `CODEBASE_MCP_LOG`: log level such as `error`, `warn`, `info`, `debug`, or `trace`
+- `CODEBASE_MCP_LOG`: log level such as `error`, `warn`, `info`, `debug`, or `trace` (default: `info`)
 - `CODEBASE_MCP_LOG_FILE`: write logs to a file instead of stderr
 - `CODEBASE_MCP_WORKSPACE_ROOT`: preferred workspace root for relative tool paths when the client does not send roots
-- `CODEBASE_MCP_INDEX_DIR`: override the persistent path-index cache directory
+- `CODEBASE_MCP_WALK_THREADS`: thread count for parallel directory walkers (default: up to 4, HDD-friendly)
+- `CODEBASE_MCP_INDEX_DIR`: override the persistent index cache directory
 - `CODEBASE_MCP_INDEX_STALE_SECS`: seconds before a completed path index is considered stale
+- `CODEBASE_MCP_INDEX_MAP_SIZE_MB`: LMDB map size in MB (default: `4096`; this reserves virtual address space, not committed RAM)
+- `CODEBASE_MCP_TANTIVY_ENABLED`: enable the Tantivy content sidecar (default: `true`)
+- `CODEBASE_MCP_TANTIVY_MAX_FILE_BYTES`: maximum file size Tantivy will read for content indexing (default: `1048576`)
+- `CODEBASE_MCP_TANTIVY_MAX_ZONE_BYTES`: maximum bytes per warmed content zone (default: `1073741824`)
+- `CODEBASE_MCP_TANTIVY_MAX_WORKSPACE_BYTES`: maximum bytes per workspace content sidecar (default: `4294967296`)
 
 Legacy `TURBO_*` aliases are still accepted for the same settings.
+
+### Index V2 Storage
+
+The server keeps one index per canonical workspace root. LMDB is the source of truth for path metadata; Tantivy is a controlled sidecar for warmed content zones.
+
+- Windows default: `%LOCALAPPDATA%\codebase-mcp\index-v2\<workspace_hash>\`
+- Linux/macOS default: `$XDG_CACHE_HOME/codebase-mcp/index-v2/<workspace_hash>/` or `~/.cache/codebase-mcp/index-v2/<workspace_hash>/`
+- Override: `<CODEBASE_MCP_INDEX_DIR>\index-v2\<workspace_hash>\`
+- Tantivy sidecar: `<workspace_index_dir>\tantivy-content\`
+- No watcher is used in this phase. Metadata refresh is explicit/stale-based and walks the workspace with `ignore`.
+- Workspace-root Tantivy warm stores path/name tokens only. Full content is warmed for scoped subtrees and falls back to grep when content is not indexed or policy limits are hit.
 
 ## Client Configuration
 
@@ -154,6 +171,35 @@ Legacy `TURBO_*` aliases are still accepted for the same settings.
 }
 ```
 
+### Search inside a very large checkout
+
+```json
+{
+  "name": "text_search",
+  "arguments": {
+    "query": "BrowserMainLoop",
+    "paths": ["C:/browser/chromium/src/content/browser"],
+    "includes": ["*.cc", "*.h"],
+    "excludes": ["third_party/**", "out/**"],
+    "max_results": 20,
+    "max_line_length": 240
+  }
+}
+```
+
+### Map a Chromium-sized subtree
+
+```json
+{
+  "name": "project_map",
+  "arguments": {
+    "path": "C:/browser/chromium/src/content/browser",
+    "max_depth": 2,
+    "max_children_per_dir": 100
+  }
+}
+```
+
 ### Read multiple snippets in one request
 
 ```json
@@ -222,8 +268,20 @@ Legacy `TURBO_*` aliases are still accepted for the same settings.
 - Write tools return structured success or error payloads instead of free-form text.
 - Mutating tools record history metadata so clients can decide when undo/redo is available.
 - `read_file_range` rejects oversized files.
-- Tool calls are rate limited and wrapped in a request timeout.
+- Directory-wide tools use ripgrep's `ignore` and `grep-searcher` crates where applicable, keep output compact with result and line-length controls, and let clients narrow work with `paths`, `includes`, and `excludes`.
+- Tool calls default to a fixed 60s timeout. Clients can extend a known-long call by adding `timeout_seconds`, `timeout_secs`, or `timeout_ms` to the `tools/call` params; values are capped at 600s.
 - `server_health` reports uptime and indexing status so clients can reason about readiness.
+
+## Very Large Repositories
+
+For Chromium-sized workspaces, use the MCP as an index/path/scope-first toolset:
+
+- Prefer scoped `paths` such as `content/browser`, `base`, or `chrome/browser` instead of the workspace root.
+- Prefer concrete basenames or path tokens for `fuzzy_find`, for example `navigation_controller_impl` instead of broad text like `sqlite db`.
+- Keep `project_map` shallow, usually `max_depth <= 2` and `max_children_per_dir <= 100`.
+- Use glob excludes with recursive form such as `third_party/**` and `out/**`.
+- `text_search` uses Tantivy when a scoped content zone is ready, and falls back to grep when the query or zone requires byte-level scanning.
+- C/C++ AST support is local Tree-sitter parsing for symbols, bodies, and outbound calls. It is not a replacement for clangd, Kythe, or a full C++ semantic index.
 
 ## Development
 
