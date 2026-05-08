@@ -31,6 +31,8 @@ pub enum LanguageKind {
     CSharp,
     Php,
     Ruby,
+    Swift,
+    ObjectiveC,
 }
 
 pub struct ParsedAstFile {
@@ -58,6 +60,8 @@ pub fn parse_language_filter(raw: Option<&str>) -> Result<Option<LanguageKind>> 
         "csharp" | "c#" | "cs" => Ok(Some(LanguageKind::CSharp)),
         "php" => Ok(Some(LanguageKind::Php)),
         "ruby" | "rb" => Ok(Some(LanguageKind::Ruby)),
+        "swift" => Ok(Some(LanguageKind::Swift)),
+        "objc" | "objective-c" | "objectivec" | "m" | "mm" => Ok(Some(LanguageKind::ObjectiveC)),
         other => Err(anyhow::anyhow!("Unsupported language '{}'", other)),
     }
 }
@@ -117,6 +121,16 @@ pub fn detect_language(path: &Path) -> Option<(LanguageKind, &'static str, Langu
             LanguageKind::Python,
             "Python",
             tree_sitter_python::LANGUAGE.into(),
+        )),
+        "swift" => Some((
+            LanguageKind::Swift,
+            "Swift",
+            tree_sitter_swift::LANGUAGE.into(),
+        )),
+        "m" | "mm" => Some((
+            LanguageKind::ObjectiveC,
+            "Objective-C",
+            tree_sitter_objc::LANGUAGE.into(),
         )),
         _ => None,
     }
@@ -293,6 +307,17 @@ pub fn declaration_name<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str
             node.child_by_field_name("declarator")
                 .and_then(|declarator| declarator_name(declarator, source))
         })
+        .or_else(|| first_identifier_child(node, source))
+}
+
+fn first_identifier_child<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if is_identifier_like_node(child.kind()) {
+            return node_text(child, source);
+        }
+    }
+    None
 }
 
 fn declarator_name<'a>(node: Node<'a>, source: &'a [u8]) -> Option<&'a str> {
@@ -337,6 +362,7 @@ fn is_identifier_like_node(kind: &str) -> bool {
             | "destructor_name"
             | "operator_name"
             | "operator"
+            | "simple_identifier"
     )
 }
 
@@ -404,6 +430,7 @@ pub fn is_call_node(kind: &str) -> bool {
             | "scoped_call_expression"
             | "object_creation_expression"
             | "explicit_constructor_invocation"
+            | "message_expression"
     )
 }
 
@@ -467,6 +494,16 @@ pub fn is_symbol_node(kind: &str) -> bool {
             | "class"
             | "module"
             | "arrow_function"
+            | "init_declaration"
+            | "protocol_declaration"
+            | "protocol_function_declaration"
+            | "enum_entry"
+            | "class_interface"
+            | "class_implementation"
+            | "implementation_definition"
+            | "struct_declaration"
+            | "category_interface"
+            | "category_implementation"
     )
 }
 
@@ -482,6 +519,8 @@ pub fn is_function_like_node(kind: &str) -> bool {
             | "destructor_declaration"
             | "method"
             | "singleton_method"
+            | "init_declaration"
+            | "protocol_function_declaration"
     )
 }
 

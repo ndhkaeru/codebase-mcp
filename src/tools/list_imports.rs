@@ -10,7 +10,7 @@ use crate::tools::ast_support::{
 pub fn schema() -> Value {
     json!({
         "name": "list_imports",
-        "description": "List Rust and TypeScript imports for a file.",
+        "description": "List imports for Rust, JavaScript/TypeScript, Swift, and Objective-C files.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -33,10 +33,13 @@ pub async fn execute(args: &Value) -> Result<Value> {
 
     if !matches!(
         parsed.language_kind,
-        LanguageKind::Rust | LanguageKind::JavaScript
+        LanguageKind::Rust
+            | LanguageKind::JavaScript
+            | LanguageKind::Swift
+            | LanguageKind::ObjectiveC
     ) {
         return Err(anyhow::anyhow!(
-            "list_imports currently supports Rust and JavaScript/TypeScript files"
+            "list_imports currently supports Rust, JavaScript/TypeScript, Swift, and Objective-C files"
         ));
     }
 
@@ -103,6 +106,38 @@ fn collect_imports_recursive(
                     "kind": kind,
                     "source": source_value,
                     "clause": clause,
+                    "statement": trimmed
+                }));
+            }
+        }
+        LanguageKind::Swift if node.kind() == "import_declaration" => {
+            if let Some(statement) = node_text(node, source) {
+                let trimmed = statement.trim();
+                let clause = trimmed.trim_start_matches("import ").trim().to_string();
+                imports.push(json!({
+                    "line": node.start_position().row + 1,
+                    "kind": "import",
+                    "source": clause,
+                    "clause": clause,
+                    "statement": trimmed
+                }));
+            }
+        }
+        LanguageKind::ObjectiveC if node.kind() == "preproc_include" => {
+            if let Some(statement) = node_text(node, source) {
+                let trimmed = statement.trim();
+                let is_import = trimmed.starts_with("#import");
+                let directive = if is_import { "#import" } else { "#include" };
+                let path_value = trimmed
+                    .trim_start_matches(directive)
+                    .trim()
+                    .trim_matches(|c| c == '"' || c == '<' || c == '>')
+                    .to_string();
+                imports.push(json!({
+                    "line": node.start_position().row + 1,
+                    "kind": if is_import { "import" } else { "include" },
+                    "source": path_value,
+                    "clause": path_value,
                     "statement": trimmed
                 }));
             }
