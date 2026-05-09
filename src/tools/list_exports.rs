@@ -210,9 +210,9 @@ fn collect_swift_export(node: Node<'_>, source: &[u8], exports: &mut Vec<Value>)
     };
 
     let first_line = statement.lines().next().unwrap_or(statement).trim();
-    let visibility = if first_line.starts_with("open ") || first_line.contains(" open ") {
+    let visibility = if has_swift_visibility(first_line, "open") {
         "open"
-    } else if first_line.starts_with("public ") || first_line.contains(" public ") {
+    } else if has_swift_visibility(first_line, "public") {
         "public"
     } else {
         return;
@@ -225,6 +225,15 @@ fn collect_swift_export(node: Node<'_>, source: &[u8], exports: &mut Vec<Value>)
         "source": Value::Null,
         "statement": first_line
     }));
+}
+
+fn has_swift_visibility(first_line: &str, visibility: &str) -> bool {
+    first_line.split_whitespace().any(|token| {
+        token == visibility
+            || token
+                .strip_prefix(visibility)
+                .is_some_and(|suffix| suffix.starts_with('('))
+    })
 }
 
 fn swift_export_kind(node_kind: &str, visibility: &str) -> String {
