@@ -4,67 +4,75 @@
 ![MCP](https://img.shields.io/badge/MCP-stdio-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-`codebase-mcp` is a local-first MCP server for real codebases. It exposes 34 tools for file access, search, Markdown navigation, symbols, diffs, archive browsing, SQLite inspection, and safe write workflows with undo/redo history.
+`codebase-mcp` is a high-performance, local-first MCP server for codebase exploration and safe filesystem workflows. It runs over `stdio`, exposes 34 tools, and is designed for agents that need precise reads, search, code intelligence, structured edits, and compact responses from real repositories.
 
-## Highlights
+## What It Does
 
-- Local `stdio` MCP server that works with Cursor, Claude Desktop, VS Code, Cline, Roo, and similar clients.
-- Fast file and workspace navigation with structured JSON responses.
-- AST-aware code intelligence for Rust, Python, JavaScript/TypeScript, C/C++, Go, Java, C#, PHP, and Ruby.
-- Safe write tools with structured errors, history tracking, undo, and redo.
-- Built for large repositories where targeted reads are cheaper than dumping full files into context.
+- Serves MCP tools over standard JSON-RPC `stdio` framing.
+- Reads files and snippets without dumping entire repositories into context.
+- Searches code with literal/regex matching, glob filters, and large-repo friendly limits.
+- Builds a persistent workspace index with LMDB path metadata and an optional Tantivy content sidecar.
+- Provides Tree-sitter based symbols, imports/exports, references, definitions, symbol bodies, and call graphs.
+- Supports safe writes with structured errors plus undo/redo history.
+- Inspects Markdown, JSON, SQLite databases, archives, diffs, and workspace structure.
 
-## Quick Start
+## When To Use
 
-### Requirements
+Use `codebase-mcp` when your MCP client or coding agent needs to explore, search, and safely edit a local repository without loading large files or full directory trees into context.
 
-- Rust stable
+It is especially useful for:
 
-### Build
+- Large repositories where targeted reads and scoped searches matter.
+- Agents that need structured filesystem, search, and code-intelligence tools.
+- Workflows that benefit from undoable file edits.
+- Local-only code analysis without relying on an external indexing service.
+
+## Common Workflows
+
+1. Use `fuzzy_find`, `project_map`, or `workspace_stats` to understand the repository shape.
+2. Use `text_search` to locate relevant files, symbols, strings, or patterns.
+3. Use `read_file_range`, `read_snippets`, or `file_summary` to inspect focused content.
+4. Use `get_symbols`, `find_definition`, `find_references`, or `read_symbol_body` for code navigation.
+5. Use `edit_file`, `create_file`, `create_directory`, or `delete_file` to make changes.
+6. Use `history_status`, `undo_last_change`, or `redo_last_change` to review or revert supported edits.
+
+## Project Status
+
+- Package: `codebase-mcp`
+- Version: `1.2.0`
+- License: Apache-2.0
+- Runtime: Rust + Tokio
+- Transport: MCP `stdio`
+- MCP protocol version returned by the server: `2024-11-05`
+- Tool count: 34
+
+## Requirements
+
+- Rust stable toolchain
+- An MCP-compatible client such as Claude Code, Codex, Cursor, Windsurf, Cline, Roo, or VS Code MCP integrations
+
+## Build And Run
+
+Build a release binary:
 
 ```bash
 cargo build --release
 ```
 
-### Run
+Run directly during development:
 
 ```bash
 cargo run --release
 ```
 
-Release binaries are written to:
+Release binary locations:
 
 - Windows: `target/release/codebase-mcp.exe`
 - Linux/macOS: `target/release/codebase-mcp`
 
-### Optional Runtime Configuration
-
-- `CODEBASE_MCP_LOG`: log level such as `error`, `warn`, `info`, `debug`, or `trace` (default: `info`)
-- `CODEBASE_MCP_LOG_FILE`: write logs to a file instead of stderr
-- `CODEBASE_MCP_WORKSPACE_ROOT`: preferred workspace root for relative tool paths when the client does not send roots
-- `CODEBASE_MCP_WALK_THREADS`: thread count for parallel directory walkers (default: up to 4, HDD-friendly)
-- `CODEBASE_MCP_INDEX_DIR`: override the persistent index cache directory
-- `CODEBASE_MCP_INDEX_STALE_SECS`: seconds before a completed path index is considered stale
-- `CODEBASE_MCP_INDEX_MAP_SIZE_MB`: LMDB map size in MB (default: `4096`; this reserves virtual address space, not committed RAM)
-- `CODEBASE_MCP_TANTIVY_ENABLED`: enable the Tantivy content sidecar (default: `true`)
-- `CODEBASE_MCP_TANTIVY_MAX_FILE_BYTES`: maximum file size Tantivy will read for content indexing (default: `1048576`)
-- `CODEBASE_MCP_TANTIVY_MAX_ZONE_BYTES`: maximum bytes per warmed content zone (default: `1073741824`)
-- `CODEBASE_MCP_TANTIVY_MAX_WORKSPACE_BYTES`: maximum bytes per workspace content sidecar (default: `4294967296`)
-
-Legacy `TURBO_*` aliases are still accepted for the same settings.
-
-### Index V2 Storage
-
-The server keeps one index per canonical workspace root. LMDB is the source of truth for path metadata; Tantivy is a controlled sidecar for warmed content zones.
-
-- Windows default: `%LOCALAPPDATA%\codebase-mcp\index-v2\<workspace_hash>\`
-- Linux/macOS default: `$XDG_CACHE_HOME/codebase-mcp/index-v2/<workspace_hash>/` or `~/.cache/codebase-mcp/index-v2/<workspace_hash>/`
-- Override: `<CODEBASE_MCP_INDEX_DIR>\index-v2\<workspace_hash>\`
-- Tantivy sidecar: `<workspace_index_dir>\tantivy-content\`
-- No watcher is used in this phase. Metadata refresh is explicit/stale-based and walks the workspace with `ignore`.
-- Workspace-root Tantivy warm stores path/name tokens only. Full content is warmed for scoped subtrees and falls back to grep when content is not indexed or policy limits are hit.
-
 ## Client Configuration
+
+Use the release binary as a `stdio` MCP server.
 
 ### Claude Desktop
 
@@ -79,7 +87,7 @@ The server keeps one index per canonical workspace root. LMDB is the source of t
 }
 ```
 
-### Cursor / Windsurf / Cline
+### Cursor, Windsurf, Cline, Roo
 
 ```json
 {
@@ -92,7 +100,7 @@ The server keeps one index per canonical workspace root. LMDB is the source of t
 }
 ```
 
-### VS Code
+### VS Code MCP
 
 ```json
 {
@@ -106,7 +114,38 @@ The server keeps one index per canonical workspace root. LMDB is the source of t
 }
 ```
 
-## Tool Surface
+On Windows, point `command` to the `.exe` file.
+
+## Runtime Configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `CODEBASE_MCP_LOG` | Log level: `error`, `warn`, `info`, `debug`, or `trace`. Defaults to `info`. |
+| `CODEBASE_MCP_LOG_FILE` | Writes logs to a file instead of stderr. |
+| `CODEBASE_MCP_WORKSPACE_ROOT` | Preferred workspace root for relative tool paths when client roots are unavailable. |
+| `CODEBASE_MCP_WALK_THREADS` | Thread count for directory walking. Defaults to a conservative value up to 4. |
+| `CODEBASE_MCP_INDEX_DIR` | Overrides the persistent index cache directory. |
+| `CODEBASE_MCP_INDEX_STALE_SECS` | Seconds before completed path metadata is considered stale. |
+| `CODEBASE_MCP_INDEX_MAP_SIZE_MB` | LMDB map size in MB. Defaults to `4096`. |
+| `CODEBASE_MCP_TANTIVY_ENABLED` | Enables the Tantivy content sidecar. Defaults to `true`. |
+| `CODEBASE_MCP_TANTIVY_MAX_FILE_BYTES` | Maximum file size read for Tantivy content indexing. Defaults to `1048576`. |
+| `CODEBASE_MCP_TANTIVY_MAX_ZONE_BYTES` | Maximum bytes per warmed content zone. Defaults to `1073741824`. |
+| `CODEBASE_MCP_TANTIVY_MAX_WORKSPACE_BYTES` | Maximum bytes per workspace content sidecar. Defaults to `4294967296`. |
+
+Legacy `TURBO_*` aliases are still accepted for backward compatibility where implemented.
+
+## Index Storage
+
+The server keeps one index per canonical workspace root.
+
+- Windows default: `%LOCALAPPDATA%\codebase-mcp\index-v2\<workspace_hash>\`
+- Linux/macOS default: `$XDG_CACHE_HOME/codebase-mcp/index-v2/<workspace_hash>/` or `~/.cache/codebase-mcp/index-v2/<workspace_hash>/`
+- Custom root: `<CODEBASE_MCP_INDEX_DIR>\index-v2\<workspace_hash>\`
+- Tantivy sidecar: `<workspace_index_dir>\tantivy-content\`
+
+LMDB stores path metadata. Tantivy is used as an optional sidecar for warmed content zones. When a query or scope cannot be served from the content index, tools fall back to filesystem scanning where appropriate.
+
+## Tool Catalog
 
 ### Files And Edits
 
@@ -124,7 +163,7 @@ The server keeps one index per canonical workspace root. LMDB is the source of t
 - `undo_last_change`
 - `redo_last_change`
 
-### Search And Workspace Navigation
+### Search And Workspace
 
 - `text_search`
 - `fuzzy_find`
@@ -154,9 +193,9 @@ The server keeps one index per canonical workspace root. LMDB is the source of t
 - `server_health`
 - `batch_tool_call`
 
-## Example Calls
+## Example Tool Calls
 
-### Search Rust files for TODO comments
+Search Rust files with regex:
 
 ```json
 {
@@ -171,36 +210,7 @@ The server keeps one index per canonical workspace root. LMDB is the source of t
 }
 ```
 
-### Search inside a very large checkout
-
-```json
-{
-  "name": "text_search",
-  "arguments": {
-    "query": "BrowserMainLoop",
-    "paths": ["C:/browser/chromium/src/content/browser"],
-    "includes": ["*.cc", "*.h"],
-    "excludes": ["third_party/**", "out/**"],
-    "max_results": 20,
-    "max_line_length": 240
-  }
-}
-```
-
-### Map a Chromium-sized subtree
-
-```json
-{
-  "name": "project_map",
-  "arguments": {
-    "path": "C:/browser/chromium/src/content/browser",
-    "max_depth": 2,
-    "max_children_per_dir": 100
-  }
-}
-```
-
-### Read multiple snippets in one request
+Read multiple focused snippets in one call:
 
 ```json
 {
@@ -215,20 +225,7 @@ The server keeps one index per canonical workspace root. LMDB is the source of t
 }
 ```
 
-### Jump to a Markdown section by heading
-
-```json
-{
-  "name": "read_markdown_section",
-  "arguments": {
-    "path": "/workspace/docs/architecture.md",
-    "heading_path": ["Runtime", "Reconnect Flow"],
-    "include_subsections": true
-  }
-}
-```
-
-### Read a symbol body directly
+Find a symbol body with its signature:
 
 ```json
 {
@@ -241,21 +238,15 @@ The server keeps one index per canonical workspace root. LMDB is the source of t
 }
 ```
 
-### Batch related calls in one round-trip
+Batch related calls in one MCP round trip:
 
 ```json
 {
   "name": "batch_tool_call",
   "arguments": {
     "calls": [
-      {
-        "tool": "file_summary",
-        "args": { "path": "/workspace/README.md" }
-      },
-      {
-        "tool": "project_map",
-        "args": { "path": "/workspace", "max_depth": 2 }
-      }
+      { "tool": "file_summary", "args": { "path": "/workspace/README.md" } },
+      { "tool": "project_map", "args": { "path": "/workspace", "max_depth": 2 } }
     ]
   }
 }
@@ -263,27 +254,28 @@ The server keeps one index per canonical workspace root. LMDB is the source of t
 
 ## Behavior And Safety
 
-- The server is tools-only. It does not expose MCP resources, prompts, or templates.
-- `batch_tool_call` runs tools sequentially and rejects recursive batch calls.
+- The server exposes tools only; it does not expose MCP resources, prompts, or templates.
+- Tool responses are returned in the standard MCP `content` array shape.
+- `batch_tool_call` executes calls sequentially and rejects recursive batch calls.
+- Mutating tools record history metadata for undo/redo where supported.
 - Write tools return structured success or error payloads instead of free-form text.
-- Mutating tools record history metadata so clients can decide when undo/redo is available.
-- `read_file_range` rejects oversized files.
-- Directory-wide tools use ripgrep's `ignore` and `grep-searcher` crates where applicable, keep output compact with result and line-length controls, and let clients narrow work with `paths`, `includes`, and `excludes`.
-- Tool calls default to a fixed 60s timeout. Clients can extend a known-long call by adding `timeout_seconds`, `timeout_secs`, or `timeout_ms` to the `tools/call` params; values are capped at 600s.
-- `server_health` reports uptime and indexing status so clients can reason about readiness.
+- `read_file_range` and search-oriented tools keep output bounded for agent context.
+- Tool calls default to a 60 second timeout. Clients may request longer calls with `timeout_seconds`, `timeout_secs`, `timeout_s`, or `timeout_ms`; values are capped at 600 seconds.
+- A global rate limiter protects the server from excessive request volume.
+- `server_health` reports uptime and indexing status for readiness checks.
 
-## Very Large Repositories
+## Large Repository Tips
 
-For Chromium-sized workspaces, use the MCP as an index/path/scope-first toolset:
-
-- Prefer scoped `paths` such as `content/browser`, `base`, or `chrome/browser` instead of the workspace root.
-- Prefer concrete basenames or path tokens for `fuzzy_find`, for example `navigation_controller_impl` instead of broad text like `sqlite db`.
-- Keep `project_map` shallow, usually `max_depth <= 2` and `max_children_per_dir <= 100`.
-- Use glob excludes with recursive form such as `third_party/**` and `out/**`.
-- `text_search` uses Tantivy when a scoped content zone is ready, and falls back to grep when the query or zone requires byte-level scanning.
-- C/C++ AST support is local Tree-sitter parsing for symbols, bodies, and outbound calls. It is not a replacement for clangd, Kythe, or a full C++ semantic index.
+- Scope `paths` to the smallest relevant subtree.
+- Prefer concrete path tokens and basenames for `fuzzy_find`.
+- Keep `project_map` shallow, for example `max_depth <= 2`.
+- Use recursive glob excludes such as `third_party/**`, `node_modules/**`, `target/**`, `dist/**`, and `out/**`.
+- Use `read_snippets` after search results instead of reading full files.
+- Treat Tree-sitter results as local syntactic intelligence, not as a replacement for full semantic language servers.
 
 ## Development
+
+Format, lint, and test:
 
 ```bash
 cargo fmt
@@ -291,7 +283,27 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --release
 ```
 
-If you want to exercise the server manually, point any MCP client at the local release binary and inspect the available tool catalog from the client UI.
+Useful local checks:
+
+```bash
+cargo test
+cargo run --release
+```
+
+## Repository Layout
+
+```text
+src/
+  main.rs              MCP stdio server, JSON-RPC handling, logging, timeouts
+  mcp.rs               JSON-RPC request/response types
+  common.rs            shared path and environment helpers
+  version.rs           package version export
+  indexer/             LMDB/Tantivy workspace indexing
+  history/             write-history and undo/redo support
+  security/            path guarding and rate limiting
+  tools/               MCP tool implementations and schemas
+tests/                 integration and behavior tests
+```
 
 ## License
 
