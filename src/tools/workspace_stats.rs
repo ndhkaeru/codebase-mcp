@@ -3,6 +3,7 @@ use glob::Pattern;
 use ignore::{WalkBuilder, WalkState};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::cmp::Reverse;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -262,7 +263,7 @@ fn execute_blocking(args: Value) -> Result<Value> {
         count_b.cmp(&count_a)
     });
 
-    stats.largest_files.sort_by(|a, b| b.1.cmp(&a.1));
+    stats.largest_files.sort_by_key(|file| Reverse(file.1));
     stats.largest_files.truncate(10);
     let largest_out: Vec<Value> = stats
         .largest_files
@@ -342,7 +343,7 @@ fn build_workspace_stats_from_index(
         count_b.cmp(&count_a)
     });
 
-    stats.largest_files.sort_by(|a, b| b.1.cmp(&a.1));
+    stats.largest_files.sort_by_key(|file| Reverse(file.1));
     stats.largest_files.truncate(10);
     let largest_out: Vec<Value> = stats
         .largest_files
@@ -437,7 +438,7 @@ impl StatsAccumulator {
         }
 
         self.largest_files.append(&mut other.largest_files);
-        self.largest_files.sort_by(|a, b| b.1.cmp(&a.1));
+        self.largest_files.sort_by_key(|file| Reverse(file.1));
         self.largest_files.truncate(10);
     }
 
@@ -447,7 +448,7 @@ impl StatsAccumulator {
         {
             self.largest_files.push((path, size));
             if self.largest_files.len() > 20 {
-                self.largest_files.sort_by(|a, b| b.1.cmp(&a.1));
+                self.largest_files.sort_by_key(|file| Reverse(file.1));
                 self.largest_files.truncate(10);
             }
         }
