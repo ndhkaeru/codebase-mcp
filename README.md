@@ -39,7 +39,7 @@ It is especially useful for:
 ## Project Status
 
 - Package: `codebase-mcp`
-- Version: `1.2.0`
+- Version: `1.2.1`
 - License: Apache-2.0
 - Runtime: Rust + Tokio
 - Transport: MCP `stdio`
@@ -304,6 +304,16 @@ src/
   tools/               MCP tool implementations and schemas
 tests/                 integration and behavior tests
 ```
+
+## Release Notes
+
+### 1.2.1
+
+- Adds Swift and Objective-C language support for AST-backed tools.
+- Improves import/export handling for Swift and Objective-C.
+- Formats workspace stats imports.
+- Fixes Clippy sort warnings.
+- Refreshes README project information.
 
 ## License
 

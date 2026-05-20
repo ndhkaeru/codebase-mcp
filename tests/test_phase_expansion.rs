@@ -132,6 +132,30 @@ async fn test_list_imports_and_exports_cover_typescript_and_rust() {
 }
 
 #[tokio::test]
+async fn test_list_exports_treats_swift_public_set_properties_as_public_api() {
+    let dir = tempdir().unwrap();
+    let swift_path = dir.path().join("Counter.swift");
+    fs::write(
+        &swift_path,
+        "public struct Counter {\n    public(set) var count: Int\n}\n",
+    )
+    .unwrap();
+
+    let swift_exports = list_exports::execute(&json!({ "path": swift_path.to_str().unwrap() }))
+        .await
+        .unwrap();
+
+    assert!(
+        swift_exports
+            .get("exports")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .any(|item| item.get("name").and_then(|value| value.as_str()) == Some("count"))
+    );
+}
+
+#[tokio::test]
 async fn test_json_tools_extract_paths_and_schema() {
     let json_text = r#"{"user":{"name":"Ada","roles":["admin"],"active":true}}"#;
 

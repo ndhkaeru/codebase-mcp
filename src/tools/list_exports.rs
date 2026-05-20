@@ -10,7 +10,7 @@ use crate::tools::ast_support::{
 pub fn schema() -> Value {
     json!({
         "name": "list_exports",
-        "description": "List Rust and TypeScript exports for a file.",
+        "description": "List exports for Rust, JavaScript/TypeScript, Swift, and Objective-C files.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -33,10 +33,13 @@ pub async fn execute(args: &Value) -> Result<Value> {
 
     if !matches!(
         parsed.language_kind,
-        LanguageKind::Rust | LanguageKind::JavaScript
+        LanguageKind::Rust
+            | LanguageKind::JavaScript
+            | LanguageKind::Swift
+            | LanguageKind::ObjectiveC
     ) {
         return Err(anyhow::anyhow!(
-            "list_exports currently supports Rust and JavaScript/TypeScript files"
+            "list_exports currently supports Rust, JavaScript/TypeScript, Swift, and Objective-C files"
         ));
     }
 
@@ -65,6 +68,8 @@ fn collect_exports_recursive(
     match language_kind {
         LanguageKind::Rust => collect_rust_export(node, source, exports),
         LanguageKind::JavaScript => collect_js_export(node, source, exports),
+        LanguageKind::Swift => collect_swift_export(node, source, exports),
+        LanguageKind::ObjectiveC => collect_objc_export(node, source, exports),
         _ => {}
     }
 
@@ -184,4 +189,83 @@ fn extract_export_name(statement: &str) -> Value {
     }
 
     Value::Null
+}
+
+fn collect_swift_export(node: Node<'_>, source: &[u8], exports: &mut Vec<Value>) {
+    let interesting_kind = matches!(
+        node.kind(),
+        "class_declaration"
+            | "protocol_declaration"
+            | "function_declaration"
+            | "property_declaration"
+            | "init_declaration"
+    );
+    if !interesting_kind {
+        return;
+    }
+
+    let statement = match node_text(node, source) {
+        Some(statement) => statement.trim(),
+        None => return,
+    };
+
+    let first_line = statement.lines().next().unwrap_or(statement).trim();
+    let visibility = if has_swift_visibility(first_line, "open") {
+        "open"
+    } else if has_swift_visibility(first_line, "public") {
+        "public"
+    } else {
+        return;
+    };
+
+    exports.push(json!({
+        "line": node.start_position().row + 1,
+        "kind": swift_export_kind(node.kind(), visibility),
+        "name": declaration_name(&node, source),
+        "source": Value::Null,
+        "statement": first_line
+    }));
+}
+
+fn has_swift_visibility(first_line: &str, visibility: &str) -> bool {
+    first_line.split_whitespace().any(|token| {
+        token == visibility
+            || token
+                .strip_prefix(visibility)
+                .is_some_and(|suffix| suffix.starts_with('('))
+    })
+}
+
+fn swift_export_kind(node_kind: &str, visibility: &str) -> String {
+    let item = match node_kind {
+        "class_declaration" => "class",
+        "protocol_declaration" => "protocol",
+        "function_declaration" => "function",
+        "property_declaration" => "property",
+        "init_declaration" => "init",
+        other => other,
+    };
+    format!("{visibility}_{item}")
+}
+
+fn collect_objc_export(node: Node<'_>, source: &[u8], exports: &mut Vec<Value>) {
+    let kind = match node.kind() {
+        "class_interface" => "interface",
+        "protocol_declaration" => "protocol",
+        "category_interface" => "category",
+        _ => return,
+    };
+
+    let statement = match node_text(node, source) {
+        Some(statement) => statement.trim(),
+        None => return,
+    };
+
+    exports.push(json!({
+        "line": node.start_position().row + 1,
+        "kind": kind,
+        "name": declaration_name(&node, source),
+        "source": Value::Null,
+        "statement": statement.lines().next().unwrap_or(statement)
+    }));
 }

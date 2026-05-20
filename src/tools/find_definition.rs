@@ -55,9 +55,9 @@ fn execute_blocking(args: Value) -> Result<Value> {
         ));
     }
 
+    let escaped_symbol = regex::escape(symbol);
     let pattern_str = format!(
-        r"(?i)\b(fn|pub\s+fn|def|class|struct|enum|trait|interface|type|function|const|let|var|void|int|bool|auto|static)\s+{}\b",
-        regex::escape(symbol)
+        r"(?i)(?:\b(?:fn|pub\s+fn|def|class|struct|enum|trait|interface|protocol|actor|extension|type|function|func|const|let|var|void|int|bool|auto|static)\s+{escaped_symbol}\b|@(?:interface|implementation|protocol)\s+{escaped_symbol}\b)"
     );
 
     let matcher = RegexMatcherBuilder::new()
