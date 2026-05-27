@@ -10,7 +10,7 @@ use crate::tools::ast_support::{
 pub fn schema() -> Value {
     json!({
         "name": "list_exports",
-        "description": "List exports for Rust, JavaScript/TypeScript, Swift, and Objective-C files.",
+        "description": "List exports for Rust, JavaScript/TypeScript, Swift, Nix, and Objective-C files.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -36,10 +36,11 @@ pub async fn execute(args: &Value) -> Result<Value> {
         LanguageKind::Rust
             | LanguageKind::JavaScript
             | LanguageKind::Swift
+            | LanguageKind::Nix
             | LanguageKind::ObjectiveC
     ) {
         return Err(anyhow::anyhow!(
-            "list_exports currently supports Rust, JavaScript/TypeScript, Swift, and Objective-C files"
+            "list_exports currently supports Rust, JavaScript/TypeScript, Swift, Nix, and Objective-C files"
         ));
     }
 
@@ -69,6 +70,7 @@ fn collect_exports_recursive(
         LanguageKind::Rust => collect_rust_export(node, source, exports),
         LanguageKind::JavaScript => collect_js_export(node, source, exports),
         LanguageKind::Swift => collect_swift_export(node, source, exports),
+        LanguageKind::Nix => collect_nix_export(node, source, exports),
         LanguageKind::ObjectiveC => collect_objc_export(node, source, exports),
         _ => {}
     }
@@ -265,6 +267,29 @@ fn collect_objc_export(node: Node<'_>, source: &[u8], exports: &mut Vec<Value>) 
         "line": node.start_position().row + 1,
         "kind": kind,
         "name": declaration_name(&node, source),
+        "source": Value::Null,
+        "statement": statement.lines().next().unwrap_or(statement)
+    }));
+}
+
+fn collect_nix_export(node: Node<'_>, source: &[u8], exports: &mut Vec<Value>) {
+    if node.kind() != "binding" {
+        return;
+    }
+
+    let Some(name) = declaration_name(&node, source) else {
+        return;
+    };
+
+    let statement = match node_text(node, source) {
+        Some(statement) => statement.trim(),
+        None => return,
+    };
+
+    exports.push(json!({
+        "line": node.start_position().row + 1,
+        "kind": "binding",
+        "name": name,
         "source": Value::Null,
         "statement": statement.lines().next().unwrap_or(statement)
     }));

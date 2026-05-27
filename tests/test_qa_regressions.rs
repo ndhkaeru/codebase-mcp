@@ -319,6 +319,18 @@ async fn test_trailing_newline_line_counts_are_not_off_by_one() {
     .await
     .unwrap();
     assert_eq!(summary.get("lines").and_then(|v| v.as_i64()), Some(3));
+
+    let nix_path = dir.path().join("flake.nix");
+    fs::write(&nix_path, "{ packages.default = null; }\n").unwrap();
+    let nix_summary = file_summary::execute(&json!({
+        "path": nix_path.to_str().unwrap()
+    }))
+    .await
+    .unwrap();
+    assert_eq!(
+        nix_summary.get("language").and_then(|v| v.as_str()),
+        Some("Nix")
+    );
 }
 
 #[tokio::test]
@@ -368,6 +380,11 @@ async fn test_workspace_stats_reports_total_and_per_language_lines() {
         "print('a')\nprint('b')\nprint('c')\n",
     )
     .unwrap();
+    fs::write(
+        dir.path().join("flake.nix"),
+        "{ packages.default = null; }\n",
+    )
+    .unwrap();
 
     let result = workspace_stats::execute(&json!({
         "path": dir.path().to_str().unwrap()
@@ -375,7 +392,7 @@ async fn test_workspace_stats_reports_total_and_per_language_lines() {
     .await
     .unwrap();
 
-    assert_eq!(result.get("total_lines").and_then(|v| v.as_u64()), Some(5));
+    assert_eq!(result.get("total_lines").and_then(|v| v.as_u64()), Some(6));
     let breakdown = result
         .get("languages_breakdown")
         .and_then(|v| v.as_array())
@@ -387,6 +404,10 @@ async fn test_workspace_stats_reports_total_and_per_language_lines() {
     assert!(breakdown.iter().any(|item| {
         item.get("language").and_then(|v| v.as_str()) == Some("Python")
             && item.get("lines").and_then(|v| v.as_u64()) == Some(3)
+    }));
+    assert!(breakdown.iter().any(|item| {
+        item.get("language").and_then(|v| v.as_str()) == Some("Nix")
+            && item.get("lines").and_then(|v| v.as_u64()) == Some(1)
     }));
 }
 

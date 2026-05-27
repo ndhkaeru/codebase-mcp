@@ -57,7 +57,7 @@ fn execute_blocking(args: Value) -> Result<Value> {
 
     let escaped_symbol = regex::escape(symbol);
     let pattern_str = format!(
-        r"(?i)(?:\b(?:fn|pub\s+fn|def|class|struct|enum|trait|interface|protocol|actor|extension|type|function|func|const|let|var|void|int|bool|auto|static)\s+{escaped_symbol}\b|@(?:interface|implementation|protocol)\s+{escaped_symbol}\b)"
+        r"(?i)(?:\b(?:fn|pub\s+fn|def|class|struct|enum|trait|interface|protocol|actor|extension|type|function|func|const|let|var|void|int|bool|auto|static)\s+{escaped_symbol}\b|@(?:interface|implementation|protocol)\s+{escaped_symbol}\b|\b{escaped_symbol}\s*=)"
     );
 
     let matcher = RegexMatcherBuilder::new()

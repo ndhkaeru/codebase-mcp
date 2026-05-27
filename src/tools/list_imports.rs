@@ -10,7 +10,7 @@ use crate::tools::ast_support::{
 pub fn schema() -> Value {
     json!({
         "name": "list_imports",
-        "description": "List imports for Rust, JavaScript/TypeScript, Swift, and Objective-C files.",
+        "description": "List imports for Rust, JavaScript/TypeScript, Swift, Nix, and Objective-C files.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -36,10 +36,11 @@ pub async fn execute(args: &Value) -> Result<Value> {
         LanguageKind::Rust
             | LanguageKind::JavaScript
             | LanguageKind::Swift
+            | LanguageKind::Nix
             | LanguageKind::ObjectiveC
     ) {
         return Err(anyhow::anyhow!(
-            "list_imports currently supports Rust, JavaScript/TypeScript, Swift, and Objective-C files"
+            "list_imports currently supports Rust, JavaScript/TypeScript, Swift, Nix, and Objective-C files"
         ));
     }
 
@@ -121,6 +122,23 @@ fn collect_imports_recursive(
                     "clause": clause,
                     "statement": trimmed
                 }));
+            }
+        }
+        LanguageKind::Nix if node.kind() == "apply_expression" => {
+            if child_field_text(&node, "function", source).map(str::trim) == Some("import")
+                && let Some(source_value) = child_field_text(&node, "argument", source)
+            {
+                let source_value = source_value.trim().to_string();
+                if let Some(statement) = node_text(node, source) {
+                    let trimmed = statement.trim();
+                    imports.push(json!({
+                        "line": node.start_position().row + 1,
+                        "kind": "import",
+                        "source": source_value,
+                        "clause": source_value,
+                        "statement": trimmed
+                    }));
+                }
             }
         }
         LanguageKind::ObjectiveC if node.kind() == "preproc_include" => {

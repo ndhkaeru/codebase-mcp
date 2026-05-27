@@ -47,6 +47,7 @@ fn get_lang_from_ext(ext: &str) -> &'static str {
         "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" | "inl" | "inc" => "C++",
         "cs" => "C#",
         "swift" => "Swift",
+        "nix" => "Nix",
         "dart" => "Dart",
         "rb" => "Ruby",
         "php" => "PHP",

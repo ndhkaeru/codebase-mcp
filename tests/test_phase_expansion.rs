@@ -154,6 +154,96 @@ async fn test_list_exports_treats_swift_public_set_properties_as_public_api() {
 }
 
 #[tokio::test]
+async fn test_ast_tools_support_nix_symbols_imports_and_exports() {
+    let dir = tempdir().unwrap();
+    let nix_path = dir.path().join("flake.nix");
+    fs::write(
+        &nix_path,
+        r#"
+{ pkgs, lib ? import ./lib.nix }:
+{
+  packages.default = pkgs.hello;
+  devShells.x86_64-linux.default = pkgs.mkShell {
+    buildInputs = [ (import ./tools.nix) ];
+  };
+}
+"#,
+    )
+    .unwrap();
+
+    let symbols = get_symbols::execute(&json!({ "path": nix_path.to_str().unwrap() }))
+        .await
+        .unwrap();
+    assert_eq!(
+        symbols.get("language").and_then(|value| value.as_str()),
+        Some("Nix")
+    );
+    assert_symbol_name(&symbols, "pkgs");
+    assert_symbol_name(&symbols, "packages.default");
+
+    let imports = list_imports::execute(&json!({ "path": nix_path.to_str().unwrap() }))
+        .await
+        .unwrap();
+    assert!(
+        imports
+            .get("imports")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .any(|item| item.get("source").and_then(|value| value.as_str()) == Some("./lib.nix"))
+    );
+    assert!(
+        imports
+            .get("imports")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .any(|item| item.get("source").and_then(|value| value.as_str()) == Some("./tools.nix"))
+    );
+
+    let exports = list_exports::execute(&json!({ "path": nix_path.to_str().unwrap() }))
+        .await
+        .unwrap();
+    assert!(
+        exports
+            .get("exports")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .any(|item| {
+                item.get("name").and_then(|value| value.as_str())
+                    == Some("devShells.x86_64-linux.default")
+            })
+    );
+
+    let body = read_symbol_body::execute(&json!({
+        "symbol": "packages.default",
+        "file_hint": nix_path.to_str().unwrap(),
+        "include_signature": true
+    }))
+    .await
+    .unwrap();
+    assert_eq!(
+        body.get("match_source").and_then(|value| value.as_str()),
+        Some("ast")
+    );
+    assert!(
+        body.get("content")
+            .and_then(|value| value.as_str())
+            .unwrap()
+            .contains("pkgs.hello")
+    );
+
+    let call_graph = get_call_graph::execute(&json!({
+        "file_path": nix_path.to_str().unwrap(),
+        "symbol": "devShells.x86_64-linux.default"
+    }))
+    .await
+    .unwrap();
+    assert_string_array_contains(&call_graph, "outbound_calls", "pkgs.mkShell");
+}
+
+#[tokio::test]
 async fn test_compare_symbols_returns_unified_diff() {
     let dir = tempdir().unwrap();
     let left_path = dir.path().join("left.rs");

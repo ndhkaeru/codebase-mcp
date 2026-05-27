@@ -19,6 +19,7 @@ fn detect_language(ext: &str) -> &'static str {
         "rb" => "Ruby",
         "php" => "PHP",
         "swift" => "Swift",
+        "nix" => "Nix",
         "m" | "mm" => "Objective-C",
         "kt" | "kts" => "Kotlin",
         "scala" => "Scala",
