@@ -3,9 +3,6 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const WORKSPACE_ROOT_ENV_NAMES: &[&str] =
-    &["CODEBASE_MCP_WORKSPACE_ROOT", "TURBO_FS_WORKSPACE_ROOT"];
-const WALK_THREADS_ENV_NAMES: &[&str] = &["CODEBASE_MCP_WALK_THREADS", "TURBO_FS_WALK_THREADS"];
 const WORKSPACE_MARKERS: &[&str] = &[
     ".git",
     "Cargo.toml",
@@ -45,10 +42,6 @@ pub fn unix_timestamp_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-pub fn env_var(names: &[&str]) -> Option<String> {
-    names.iter().find_map(|name| std::env::var(name).ok())
 }
 
 pub fn env_var_os(names: &[&str]) -> Option<OsString> {
@@ -168,13 +161,6 @@ pub fn discover_workspace_root(start: &Path) -> Option<PathBuf> {
 }
 
 pub fn preferred_workspace_root() -> Option<(PathBuf, &'static str)> {
-    if let Some(value) = env_var(WORKSPACE_ROOT_ENV_NAMES) {
-        return Some((
-            canonicalize_if_exists(PathBuf::from(value)),
-            "workspace_root_env",
-        ));
-    }
-
     if let Some(active_runtime) = crate::indexer::get_active_runtime_snapshot() {
         let root = canonicalize_if_exists(PathBuf::from(active_runtime.workspace_root));
         if root.exists() && root.is_dir() {
@@ -209,12 +195,6 @@ pub fn resolve_tool_path(raw: &str) -> PathBuf {
 }
 
 pub fn bounded_walk_threads() -> usize {
-    if let Some(raw) = env_var(WALK_THREADS_ENV_NAMES)
-        && let Ok(value) = raw.parse::<usize>()
-    {
-        return value.clamp(1, 64);
-    }
-
     std::thread::available_parallelism()
         .map(|parallelism| parallelism.get().clamp(1, 4))
         .unwrap_or(2)

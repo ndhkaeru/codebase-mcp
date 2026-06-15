@@ -21,7 +21,7 @@ use tantivy::schema::{
 use tantivy::{Index, ReloadPolicy, Term, doc};
 use tracing::{error, info, warn};
 
-use crate::common::{bounded_walk_threads, env_var, env_var_os};
+use crate::common::{bounded_walk_threads, env_var_os};
 
 lazy_static::lazy_static! {
     static ref INDEX_RUNTIMES: RwLock<BTreeMap<String, IndexRuntime>> = RwLock::new(BTreeMap::new());
@@ -36,10 +36,10 @@ const DEFAULT_STALE_INDEX_SECS: u64 = 60 * 60;
 const MIN_REFRESH_INTERVAL_SECS: u64 = 30;
 const MIN_INDEX_TERM_LEN: usize = 3;
 const MAX_SHORTLIST_CANDIDATES: usize = 8_192;
-const DEFAULT_INDEX_MAP_SIZE_MB: u64 = 4_096;
-const DEFAULT_TANTIVY_MAX_FILE_BYTES: u64 = 1_048_576;
-const DEFAULT_TANTIVY_MAX_ZONE_BYTES: u64 = 1_073_741_824;
-const DEFAULT_TANTIVY_MAX_WORKSPACE_BYTES: u64 = 4_294_967_296;
+const DEFAULT_INDEX_MAP_SIZE_MB: u64 = 8_192;
+const DEFAULT_TANTIVY_MAX_FILE_BYTES: u64 = 2_097_152;
+const DEFAULT_TANTIVY_MAX_ZONE_BYTES: u64 = 4_294_967_296;
+const DEFAULT_TANTIVY_MAX_WORKSPACE_BYTES: u64 = 17_179_869_184;
 const TANTIVY_WRITER_MEMORY_BYTES: usize = 64 * 1024 * 1024;
 const ROOT_CHILDREN_KEY: &str = ".";
 
@@ -360,10 +360,7 @@ pub fn query_tantivy_content_candidates(
 }
 
 pub fn stale_index_after_secs() -> u64 {
-    env_var(&["CODEBASE_MCP_INDEX_STALE_SECS", "TURBO_FS_INDEX_STALE_SECS"])
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_STALE_INDEX_SECS)
+    DEFAULT_STALE_INDEX_SECS
 }
 
 pub fn ensure_workspace_index(workspace_root: PathBuf, workspace_source: String) {
@@ -908,7 +905,7 @@ fn refresh_tantivy_zone(
     let mut indexed_files = 0usize;
     let mut indexed_bytes = 0u64;
     let mut partial = false;
-    let limits = ContentPolicy::from_env();
+    let limits = ContentPolicy::default();
     let zone_is_workspace_root = zone.is_empty();
     let allow_third_party = zone == "third_party" || zone.starts_with("third_party/");
 
@@ -1175,20 +1172,11 @@ struct ContentPolicy {
 }
 
 impl ContentPolicy {
-    fn from_env() -> Self {
+    fn default() -> Self {
         Self {
-            max_file_bytes: env_u64(
-                "CODEBASE_MCP_TANTIVY_MAX_FILE_BYTES",
-                DEFAULT_TANTIVY_MAX_FILE_BYTES,
-            ),
-            max_zone_bytes: env_u64(
-                "CODEBASE_MCP_TANTIVY_MAX_ZONE_BYTES",
-                DEFAULT_TANTIVY_MAX_ZONE_BYTES,
-            ),
-            max_workspace_bytes: env_u64(
-                "CODEBASE_MCP_TANTIVY_MAX_WORKSPACE_BYTES",
-                DEFAULT_TANTIVY_MAX_WORKSPACE_BYTES,
-            ),
+            max_file_bytes: DEFAULT_TANTIVY_MAX_FILE_BYTES,
+            max_zone_bytes: DEFAULT_TANTIVY_MAX_ZONE_BYTES,
+            max_workspace_bytes: DEFAULT_TANTIVY_MAX_WORKSPACE_BYTES,
         }
     }
 }
@@ -1671,7 +1659,7 @@ fn index_storage_dir_for_workspace(workspace_root: &Path) -> PathBuf {
 }
 
 fn index_storage_root() -> PathBuf {
-    if let Some(custom_dir) = env_var_os(&["CODEBASE_MCP_INDEX_DIR", "TURBO_FS_INDEX_DIR"]) {
+    if let Some(custom_dir) = env_var_os(&["CODEBASE_MCP_INDEX_DIR"]) {
         return PathBuf::from(custom_dir).join("index-v2");
     }
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
@@ -1781,17 +1769,9 @@ fn current_unix_timestamp() -> u64 {
 }
 
 fn index_map_size_bytes() -> u64 {
-    env_u64("CODEBASE_MCP_INDEX_MAP_SIZE_MB", DEFAULT_INDEX_MAP_SIZE_MB)
+    DEFAULT_INDEX_MAP_SIZE_MB
         .saturating_mul(1024)
         .saturating_mul(1024)
-}
-
-fn env_u64(name: &str, default: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
 }
 
 fn tantivy_enabled() -> bool {
