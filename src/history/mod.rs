@@ -43,7 +43,6 @@ pub struct RecordOutcome {
     pub reason: Option<String>,
 }
 
-
 pub fn missing_snapshot() -> PathSnapshot {
     PathSnapshot {
         state: SnapshotState::Missing,
@@ -199,7 +198,6 @@ pub fn no_history(reason: impl Into<String>) -> RecordOutcome {
     }
 }
 
-
 #[allow(dead_code)]
 pub fn clear_history() {
     if let Ok(mut guard) = HISTORY_STATE.lock() {
@@ -246,7 +244,7 @@ mod tests {
         let oversized = vec![b'x'; MAX_TRACKED_SNAPSHOT_BYTES + 1];
         let outcome = record_change(
             "create_file",
-            &path,
+            path,
             missing_snapshot(),
             file_snapshot(oversized, Some("UTF-8".to_string()), Some("lf".to_string())),
             "large write",
@@ -254,5 +252,4 @@ mod tests {
         assert!(!outcome.recorded);
         assert!(outcome.reason.unwrap().contains("history snapshot limit"));
     }
-
 }
