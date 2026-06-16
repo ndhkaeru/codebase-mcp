@@ -1,6 +1,6 @@
 [package]
 name = "codebase-mcp"
-version = "1.2.1"
+version = "1.3.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "High-performance MCP server for filesystem and code intelligence workflows"
@@ -23,12 +23,11 @@ ignore = "0.4.25"
 lazy_static = "1.5.0"
 mcp-sdk = "0.0.3"
 regex = "1.12.3"
-rusqlite = { version = "0.37.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 similar = "2.7.0"
 tantivy = "0.26.1"
-tar = "0.4.45"
+tar = "0.4.46"
 tokio = { version = "1.49.0", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"

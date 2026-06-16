@@ -13,6 +13,16 @@ async fn test_git_related_tools_are_not_exposed_or_dispatchable() {
         "git_log",
         "git_blame",
         "get_semantic_diff",
+        "markdown_outline",
+        "read_markdown_section",
+        "replace_markdown_section",
+        "find_json_paths",
+        "extract_json_schema",
+        "sqlite_inspect",
+        "diff_two_snippets",
+        "history_status",
+        "undo_last_change",
+        "redo_last_change",
     ];
     let listed_tools = tools::list_tools();
 

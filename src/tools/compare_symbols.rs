@@ -15,24 +15,24 @@ pub fn schema() -> Value {
                 "left": {
                     "type": "object",
                     "properties": {
-                        "symbol": { "type": "string" },
-                        "paths": { "type": "array", "items": { "type": "string" } },
-                        "file_hint": { "type": "string" },
-                        "language": { "type": "string" }
+                        "symbol": { "type": "string", "description": "Symbol name to resolve on this side of the comparison." },
+                        "paths": { "type": "array", "items": { "type": "string" }, "description": "Search roots or files for this side. Defaults to the active workspace." },
+                        "file_hint": { "type": "string", "description": "Preferred file to check first for this side." },
+                        "language": { "type": "string", "description": "Optional language filter using the same accepted values as read_symbol_body." }
                     },
                     "required": ["symbol"]
                 },
                 "right": {
                     "type": "object",
                     "properties": {
-                        "symbol": { "type": "string" },
-                        "paths": { "type": "array", "items": { "type": "string" } },
-                        "file_hint": { "type": "string" },
-                        "language": { "type": "string" }
+                        "symbol": { "type": "string", "description": "Symbol name to resolve on this side of the comparison." },
+                        "paths": { "type": "array", "items": { "type": "string" }, "description": "Search roots or files for this side. Defaults to the active workspace." },
+                        "file_hint": { "type": "string", "description": "Preferred file to check first for this side." },
+                        "language": { "type": "string", "description": "Optional language filter using the same accepted values as read_symbol_body." }
                     },
                     "required": ["symbol"]
                 },
-                "include_signature": { "type": "boolean" }
+                "include_signature": { "type": "boolean", "description": "Include symbol signatures in compared content. Defaults to true." }
             },
             "required": ["left", "right"]
         }

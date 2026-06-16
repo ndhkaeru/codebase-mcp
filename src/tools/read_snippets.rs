@@ -11,22 +11,22 @@ pub fn schema() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "requests": {
+                "requests": { "description": "List of file range requests. Each range uses 1-indexed inclusive line numbers.",
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "path": { "type": "string" },
-                            "start_line": { "type": "integer" },
-                            "end_line": { "type": "integer" },
-                            "max_lines": { "type": "integer" },
-                            "max_bytes": { "type": "integer" },
-                            "include_line_numbers": { "type": "boolean" }
+                            "path": { "type": "string", "description": "File path to read. Relative paths resolve against the active workspace." },
+                            "start_line": { "type": "integer", "description": "1-indexed inclusive start line. Defaults to 1." },
+                            "end_line": { "type": "integer", "description": "1-indexed inclusive end line. Omit to read until max_lines/max_bytes or EOF." },
+                            "max_lines": { "type": "integer", "description": "Maximum lines for this snippet." },
+                            "max_bytes": { "type": "integer", "description": "Maximum UTF-8 output bytes for this snippet. If max_lines and max_bytes are both set, the first reached limit wins." },
+                            "include_line_numbers": { "type": "boolean", "description": "Prefix returned lines with 1-indexed line numbers when true. Defaults to false." }
                         },
                         "required": ["path"]
                     }
                 },
-                "max_total_bytes": { "type": "integer" }
+                "max_total_bytes": { "type": "integer", "description": "Optional total UTF-8 output budget across all snippets. Later requests are skipped when the budget is exhausted." }
             },
             "required": ["requests"]
         }

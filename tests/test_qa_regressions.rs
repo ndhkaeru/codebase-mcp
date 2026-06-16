@@ -38,22 +38,14 @@ fn server_binary() -> PathBuf {
     candidate
 }
 
-fn call_binary_server(
-    current_dir: &Path,
-    initialize_params: Value,
-    env_root: Option<&Path>,
-) -> Value {
+fn call_binary_server(current_dir: &Path, initialize_params: Value) -> Value {
     let exe = server_binary();
     let mut command = Command::new(&exe);
     command
         .current_dir(current_dir)
-        .env("CODEBASE_MCP_LOG", "error")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(root) = env_root {
-        command.env("CODEBASE_MCP_WORKSPACE_ROOT", root);
-    }
     let mut child = command.spawn().unwrap();
 
     {
@@ -103,7 +95,6 @@ fn call_binary_server(
 fn call_binary_server_tool_then_health(
     current_dir: &Path,
     initialize_params: Value,
-    env_root: Option<&Path>,
     extra_env: &[(&str, &str)],
     tool_name: &str,
     tool_arguments: Value,
@@ -113,13 +104,9 @@ fn call_binary_server_tool_then_health(
     let mut command = Command::new(&exe);
     command
         .current_dir(current_dir)
-        .env("CODEBASE_MCP_LOG", "error")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(root) = env_root {
-        command.env("CODEBASE_MCP_WORKSPACE_ROOT", root);
-    }
     for (key, value) in extra_env {
         command.env(key, value);
     }
@@ -384,7 +371,7 @@ async fn test_batch_tool_call_flattens_inner_tool_payloads() {
 #[test]
 fn test_server_health_disables_index_when_process_cwd_is_not_a_workspace() {
     let dir = tempdir().unwrap();
-    let result = call_binary_server(dir.path(), json!({}), None);
+    let result = call_binary_server(dir.path(), json!({}));
 
     assert_eq!(
         result.get("index_status").and_then(|v| v.as_str()),
@@ -403,7 +390,7 @@ fn test_server_health_can_fallback_to_project_like_process_cwd() {
     )
     .unwrap();
 
-    let result = call_binary_server(dir.path(), json!({}), None);
+    let result = call_binary_server(dir.path(), json!({}));
 
     let status = result.get("index_status").and_then(|v| v.as_str()).unwrap();
     assert!(matches!(status, "idle" | "active"));
@@ -424,16 +411,21 @@ fn test_server_health_can_fallback_to_project_like_process_cwd() {
 }
 
 #[test]
-fn test_server_health_can_use_explicit_env_workspace_root() {
+fn test_server_health_uses_client_workspace_root() {
     let current_dir = tempdir().unwrap();
     let workspace_root = tempdir().unwrap();
-    let result = call_binary_server(current_dir.path(), json!({}), Some(workspace_root.path()));
+    let init = json!({
+        "workspaceFolders": [
+            { "uri": file_uri_for_test(workspace_root.path()) }
+        ]
+    });
+    let result = call_binary_server(current_dir.path(), init);
 
     assert_eq!(
         result
             .get("index_workspace_source")
             .and_then(|v| v.as_str()),
-        Some("env:CODEBASE_MCP_WORKSPACE_ROOT")
+        Some("client_initialize")
     );
     let root_value = result
         .get("index_workspace_root")
@@ -458,7 +450,7 @@ fn test_server_health_reports_multiple_client_workspaces() {
         ]
     });
 
-    let result = call_binary_server(current_dir.path(), init, None);
+    let result = call_binary_server(current_dir.path(), init);
 
     assert_eq!(
         result.get("index_workspace_count").and_then(|v| v.as_u64()),
@@ -510,7 +502,6 @@ fn test_tool_call_auto_indexes_workspace_from_request_path() {
     let (_tool_result, health) = call_binary_server_tool_then_health(
         current_dir.path(),
         json!({}),
-        None,
         &[],
         "read_file_range",
         json!({ "path": file_path.to_str().unwrap() }),
@@ -561,7 +552,6 @@ fn test_tool_call_switches_active_workspace_context() {
     let (_tool_result, health) = call_binary_server_tool_then_health(
         current_dir.path(),
         init,
-        None,
         &[],
         "read_file_range",
         json!({ "path": file_b.to_str().unwrap() }),
@@ -583,49 +573,7 @@ fn test_tool_call_switches_active_workspace_context() {
 }
 
 #[test]
-fn test_tool_call_marks_stale_index_refresh_request() {
-    let current_dir = tempdir().unwrap();
-    let workspace = tempdir().unwrap();
-    fs::write(
-        workspace.path().join("Cargo.toml"),
-        "[package]\nname = \"stale\"\nversion = \"0.1.0\"\n",
-    )
-    .unwrap();
-    fs::create_dir_all(workspace.path().join("src")).unwrap();
-    let file_path = workspace.path().join("src/lib.rs");
-    fs::write(&file_path, "fn stale() {}\n").unwrap();
-
-    let init = json!({
-        "workspaceFolders": [
-            { "uri": format!("file:///{}", workspace.path().to_string_lossy().replace('\\', "/")) }
-        ]
-    });
-    let (_tool_result, health) = call_binary_server_tool_then_health(
-        current_dir.path(),
-        init,
-        None,
-        &[("CODEBASE_MCP_INDEX_STALE_SECS", "1")],
-        "read_file_range",
-        json!({ "path": file_path.to_str().unwrap() }),
-        2200,
-    );
-
-    assert!(
-        health
-            .get("index_last_refresh_requested_at")
-            .and_then(|v| v.as_u64())
-            .is_some()
-    );
-    assert_eq!(
-        health
-            .get("index_last_request_source")
-            .and_then(|v| v.as_str()),
-        Some("tool_call:read_file_range")
-    );
-}
-
-#[test]
-fn test_tool_calls_resolve_relative_paths_against_env_workspace_root() {
+fn test_tool_calls_resolve_relative_paths_against_client_workspace_root_only() {
     let current_dir = tempdir().unwrap();
     let workspace = tempdir().unwrap();
     fs::write(
@@ -635,11 +583,15 @@ fn test_tool_calls_resolve_relative_paths_against_env_workspace_root() {
     .unwrap();
     fs::create_dir_all(workspace.path().join("src")).unwrap();
     fs::write(workspace.path().join("src/lib.rs"), "fn sample() {}\n").unwrap();
+    let init = json!({
+        "workspaceFolders": [
+            { "uri": file_uri_for_test(workspace.path()) }
+        ]
+    });
 
     let (read_result, _health) = call_binary_server_tool_then_health(
         current_dir.path(),
-        json!({}),
-        Some(workspace.path()),
+        init.clone(),
         &[],
         "read_file_range",
         json!({ "path": "src/lib.rs" }),
@@ -652,8 +604,7 @@ fn test_tool_calls_resolve_relative_paths_against_env_workspace_root() {
 
     let (resolve_result, _health) = call_binary_server_tool_then_health(
         current_dir.path(),
-        json!({}),
-        Some(workspace.path()),
+        init,
         &[],
         "resolve_path",
         json!({ "path": "src/lib.rs" }),
@@ -663,7 +614,7 @@ fn test_tool_calls_resolve_relative_paths_against_env_workspace_root() {
         resolve_result
             .get("resolution_basis")
             .and_then(|v| v.as_str()),
-        Some("workspace_root_env")
+        Some("active_index_workspace")
     );
     assert_eq!(
         resolve_result
@@ -697,7 +648,6 @@ fn test_tool_calls_resolve_relative_paths_against_client_workspace_root() {
     let (read_result, _health) = call_binary_server_tool_then_health(
         current_dir.path(),
         init.clone(),
-        None,
         &[],
         "read_file_range",
         json!({ "path": "src/lib.rs" }),
@@ -711,7 +661,6 @@ fn test_tool_calls_resolve_relative_paths_against_client_workspace_root() {
     let (resolve_result, _health) = call_binary_server_tool_then_health(
         current_dir.path(),
         init,
-        None,
         &[],
         "resolve_path",
         json!({ "path": "src/lib.rs" }),

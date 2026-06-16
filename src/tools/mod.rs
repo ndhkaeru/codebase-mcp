@@ -3,7 +3,6 @@ use serde_json::{Value, json};
 
 mod ast_support;
 mod diff_support;
-mod markdown_support;
 mod path_filters;
 
 pub mod batch_tool_call;
@@ -13,32 +12,23 @@ pub mod count_file_lines;
 pub mod create_directory;
 pub mod create_file;
 pub mod delete_file;
-pub mod diff_two_snippets;
 pub mod edit_file;
-pub mod extract_json_schema;
 pub mod file_summary;
 pub mod find_definition;
-pub mod find_json_paths;
 pub mod find_references;
 pub mod fuzzy_find;
 pub mod get_call_graph;
 pub mod get_symbols;
-pub mod history_status;
 pub mod list_exports;
 pub mod list_imports;
-pub mod markdown_outline;
 pub mod peek_archive;
 pub mod project_map;
 pub mod read_file;
-pub mod read_markdown_section;
 pub mod read_snippets;
 pub mod read_symbol_body;
-pub mod redo_last_change;
 pub mod resolve_path;
 pub mod server_health;
-pub mod sqlite_inspect;
 pub mod text_search;
-pub mod undo_last_change;
 pub mod workspace_stats;
 
 pub fn list_tools() -> Vec<Value> {
@@ -52,18 +42,11 @@ pub fn list_tools() -> Vec<Value> {
         create_directory::schema(),
         delete_file::schema(),
         edit_file::schema(),
-        history_status::schema(),
         file_summary::schema(),
-        markdown_outline::schema(),
-        read_markdown_section::schema(),
         read_snippets::schema(),
         read_symbol_body::schema(),
         list_imports::schema(),
         list_exports::schema(),
-        find_json_paths::schema(),
-        extract_json_schema::schema(),
-        sqlite_inspect::schema(),
-        diff_two_snippets::schema(),
         compare_symbols::schema(),
         fuzzy_find::schema(),
         project_map::schema(),
@@ -74,8 +57,6 @@ pub fn list_tools() -> Vec<Value> {
         find_definition::schema(),
         find_references::schema(),
         get_call_graph::schema(),
-        redo_last_change::schema(),
-        undo_last_change::schema(),
         batch_tool_call::schema(),
     ]
 }
@@ -95,18 +76,11 @@ pub async fn call_tool(params: Value) -> Result<Value> {
         "create_directory" => create_directory::execute(&arguments).await,
         "delete_file" => delete_file::execute(&arguments).await,
         "edit_file" => edit_file::execute(&arguments).await,
-        "history_status" => history_status::execute(&arguments).await,
         "file_summary" => file_summary::execute(&arguments).await,
-        "markdown_outline" => markdown_outline::execute(&arguments).await,
-        "read_markdown_section" => read_markdown_section::execute(&arguments).await,
         "read_snippets" => read_snippets::execute(&arguments).await,
         "read_symbol_body" => read_symbol_body::execute(&arguments).await,
         "list_imports" => list_imports::execute(&arguments).await,
         "list_exports" => list_exports::execute(&arguments).await,
-        "find_json_paths" => find_json_paths::execute(&arguments).await,
-        "extract_json_schema" => extract_json_schema::execute(&arguments).await,
-        "sqlite_inspect" => sqlite_inspect::execute(&arguments).await,
-        "diff_two_snippets" => diff_two_snippets::execute(&arguments).await,
         "compare_symbols" => compare_symbols::execute(&arguments).await,
         "fuzzy_find" => fuzzy_find::execute(&arguments).await,
         "project_map" => project_map::execute(&arguments).await,
@@ -117,16 +91,19 @@ pub async fn call_tool(params: Value) -> Result<Value> {
         "find_definition" => find_definition::execute(&arguments).await,
         "find_references" => find_references::execute(&arguments).await,
         "get_call_graph" => get_call_graph::execute(&arguments).await,
-        "redo_last_change" => redo_last_change::execute(&arguments).await,
-        "undo_last_change" => undo_last_change::execute(&arguments).await,
         "batch_tool_call" => batch_tool_call::execute(&arguments).await,
         _ => return Err(anyhow::anyhow!("Tool not found: {}", name)),
     };
 
     match result {
-        Ok(data) => Ok(
-            json!({ "content": [{ "type": "text", "text": serde_json::to_string(&data).unwrap_or_default() }] }),
-        ),
+        Ok(data) => {
+            if let Some(raw_text) = data.get("__mcp_raw_text").and_then(|v| v.as_str()) {
+                return Ok(json!({ "content": [{ "type": "text", "text": raw_text }] }));
+            }
+            Ok(
+                json!({ "content": [{ "type": "text", "text": serde_json::to_string(&data).unwrap_or_default() }] }),
+            )
+        }
         Err(e) => {
             Ok(json!({ "isError": true, "content": [{ "type": "text", "text": e.to_string() }] }))
         }

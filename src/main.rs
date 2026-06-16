@@ -8,22 +8,15 @@ mod version;
 
 use mcp::{JsonRpcRequest, JsonRpcResponse};
 use serde_json::{Value, json};
-use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::time::{Duration, Instant, timeout};
 use tracing::{Level, debug, error, info, warn};
-use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use version::SERVER_VERSION;
 
 const SERVER_NAME: &str = "codebase-mcp";
-const LOG_LEVEL_ENV_NAMES: &[&str] = &["CODEBASE_MCP_LOG", "TURBO_LOG"];
-const LOG_FILE_ENV_NAMES: &[&str] = &["CODEBASE_MCP_LOG_FILE", "TURBO_LOG_FILE"];
-const WORKSPACE_ROOT_ENV_NAMES: &[&str] =
-    &["CODEBASE_MCP_WORKSPACE_ROOT", "TURBO_FS_WORKSPACE_ROOT"];
-
 /// Default timeout for one tool call (seconds).
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 60;
 /// Maximum timeout a client can request for one tool call (seconds).
@@ -40,28 +33,13 @@ enum TransportMode {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let log_level = common::env_var(LOG_LEVEL_ENV_NAMES)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(Level::INFO);
+    let log_level = Level::INFO;
 
-    if let Some(log_file_path) = common::env_var(LOG_FILE_ENV_NAMES) {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_file_path)?;
-        tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_writer(BoxMakeWriter::new(file))
-            .with_max_level(log_level)
-            .with_target(false)
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_writer(io::stderr)
-            .with_max_level(log_level)
-            .with_target(false)
-            .init();
-    }
+    tracing_subscriber::fmt()
+        .with_writer(io::stderr)
+        .with_max_level(log_level)
+        .with_target(false)
+        .init();
 
     info!(
         "{} v{} starting (log_level={:?})",
@@ -116,7 +94,8 @@ async fn main() -> anyhow::Result<()> {
                                 },
                                 "capabilities": {
                                     "tools": {}
-                                }
+                                },
+                                "instructions": "Use codebase-mcp for local codebase exploration, precise file reads, scoped search, AST-backed code navigation, and safe filesystem edits. Recommended workflow: inspect structure with project_map/workspace_stats/fuzzy_find, search with text_search using scoped paths/includes, read focused ranges with read_file_range/read_snippets, use code intelligence tools for symbols/references/call graphs, then edit with edit_file/create_file/delete_file. Prefer narrow paths in large repositories and use absolute or workspace-relative paths from the active client workspace."
                             }),
                         )
                     }
@@ -423,24 +402,6 @@ fn start_indexer_if_needed() {
         return;
     }
 
-    if let Some((root, source_label)) = explicit_workspace_root_from_env() {
-        if root.exists() && root.is_dir() {
-            info!(
-                root = %root.display(),
-                source = source_label,
-                "Starting background indexer from environment workspace root"
-            );
-            indexer::ensure_workspace_index(root, source_label.to_string());
-            return;
-        }
-
-        warn!(
-            root = %root.display(),
-            source = source_label,
-            "Ignoring invalid environment workspace root"
-        );
-    }
-
     if let Ok(current_dir) = std::env::current_dir() {
         if looks_like_workspace_root(&current_dir) {
             warn!(
@@ -458,18 +419,6 @@ fn start_indexer_if_needed() {
     }
 
     warn!("No workspace root provided by client; background indexer remains disabled");
-}
-
-fn explicit_workspace_root_from_env() -> Option<(PathBuf, &'static str)> {
-    WORKSPACE_ROOT_ENV_NAMES.iter().find_map(|name| {
-        std::env::var(name).ok().map(|value| {
-            let source = match *name {
-                "CODEBASE_MCP_WORKSPACE_ROOT" => "env:CODEBASE_MCP_WORKSPACE_ROOT",
-                _ => "env:TURBO_FS_WORKSPACE_ROOT",
-            };
-            (PathBuf::from(value), source)
-        })
-    })
 }
 
 fn maybe_index_tool_workspaces(tool_name: &str, params: &Value) {
@@ -610,17 +559,7 @@ fn normalize_root_key(path: &Path) -> String {
 }
 
 fn tool_call_timeout_secs(params: &Value) -> u64 {
-    let requested_seconds = params
-        .get("timeout_seconds")
-        .or_else(|| params.get("timeout_secs"))
-        .or_else(|| params.get("timeout_s"))
-        .and_then(Value::as_u64)
-        .or_else(|| {
-            params
-                .get("timeout_ms")
-                .and_then(Value::as_u64)
-                .map(|millis| millis.saturating_add(999) / 1_000)
-        });
+    let requested_seconds = params.get("timeout_seconds").and_then(Value::as_u64);
 
     requested_seconds
         .unwrap_or(DEFAULT_TOOL_TIMEOUT_SECS)
@@ -672,13 +611,14 @@ mod tests {
             tool_call_timeout_secs(&json!({"timeout_seconds": 120})),
             120
         );
-        assert_eq!(tool_call_timeout_secs(&json!({"timeout_secs": 900})), 600);
-        assert_eq!(tool_call_timeout_secs(&json!({"timeout_ms": 90_001})), 91);
+        assert_eq!(
+            tool_call_timeout_secs(&json!({"timeout_seconds": 900})),
+            600
+        );
     }
 
     #[test]
     fn tool_timeout_cannot_reduce_default() {
         assert_eq!(tool_call_timeout_secs(&json!({"timeout_seconds": 10})), 60);
-        assert_eq!(tool_call_timeout_secs(&json!({"timeout_ms": 1_000})), 60);
     }
 }
