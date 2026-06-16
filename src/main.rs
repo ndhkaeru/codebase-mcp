@@ -94,7 +94,8 @@ async fn main() -> anyhow::Result<()> {
                                 },
                                 "capabilities": {
                                     "tools": {}
-                                }
+                                },
+                                "instructions": "Use codebase-mcp for local codebase exploration, precise file reads, scoped search, AST-backed code navigation, and safe filesystem edits. Recommended workflow: inspect structure with project_map/workspace_stats/fuzzy_find, search with text_search using scoped paths/includes, read focused ranges with read_file_range/read_snippets, use code intelligence tools for symbols/references/call graphs, then edit with edit_file/create_file/delete_file. Prefer narrow paths in large repositories and use absolute or workspace-relative paths from the active client workspace."
                             }),
                         )
                     }

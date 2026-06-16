@@ -13,12 +13,12 @@ pub fn schema() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "path": { "type": "string" },
-                "start_line": { "type": "integer" },
-                "end_line": { "type": "integer" },
-                "max_lines": { "type": "integer" },
-                "max_bytes": { "type": "integer" },
-                "include_line_numbers": { "type": "boolean" }
+                "path": { "type": "string", "description": "File path to read. Relative paths resolve against the active workspace." },
+                "start_line": { "type": "integer", "description": "1-indexed inclusive start line. Defaults to 1." },
+                "end_line": { "type": "integer", "description": "1-indexed inclusive end line. Omit to read until max_lines/max_bytes or EOF." },
+                "max_lines": { "type": "integer", "description": "Maximum number of lines to return. Applied before/alongside max_bytes for bounded output." },
+                "max_bytes": { "type": "integer", "description": "Maximum UTF-8 output bytes to return. If both max_lines and max_bytes are set, output stops at the first limit reached." },
+                "include_line_numbers": { "type": "boolean", "description": "Prefix returned lines with 1-indexed line numbers when true. Defaults to false." }
             },
             "required": ["path"]
         }

@@ -22,11 +22,11 @@ pub fn schema() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "symbol": { "type": "string" },
-                "paths": { "type": "array", "items": { "type": "string" } },
-                "file_hint": { "type": "string" },
-                "language": { "type": "string" },
-                "include_signature": { "type": "boolean" }
+                "symbol": { "type": "string", "description": "Symbol name to resolve, such as a function, method, class, type, or qualified name." },
+                "paths": { "type": "array", "items": { "type": "string" }, "description": "Search roots or files for symbol resolution. Defaults to the active workspace. Use this to scope large repositories." },
+                "file_hint": { "type": "string", "description": "Preferred file to check first. It narrows and prioritizes resolution but does not replace paths." },
+                "language": { "type": "string", "description": "Optional language filter. Accepted values include rust/rs, python/py, javascript/js/jsx/typescript/ts/tsx, c, cpp/c++, go, java, csharp/c#/cs, php, ruby/rb, swift, objc/objective-c." },
+                "include_signature": { "type": "boolean", "description": "Include the symbol signature/header when true. Defaults to true. AST parsing skips files larger than 2 MB." }
             },
             "required": ["symbol"]
         }

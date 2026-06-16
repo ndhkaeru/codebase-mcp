@@ -79,17 +79,17 @@ pub fn schema() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": { "type": "string" },
-                "paths": { "type": "array", "items": { "type": "string" } },
-                "mode": { "type": "string", "enum": ["literal", "regex"] },
-                "case_mode": { "type": "string", "enum": ["insensitive", "sensitive", "smart"] },
-                "case_sensitive": { "type": "boolean" },
-                "max_results": { "type": "integer" },
-                "includes": { "type": "array", "items": { "type": "string" } },
-                "excludes": { "type": "array", "items": { "type": "string" } },
-                "context_lines": { "type": "integer" },
-                "max_line_length": { "type": "integer" },
-                "explain_no_results": { "type": "boolean" }
+                "query": { "type": "string", "description": "Search query. Interpreted as literal text unless mode is regex." },
+                "paths": { "type": "array", "items": { "type": "string" }, "description": "Files or directories to search. Defaults to the active workspace root. Scope this for large repositories." },
+                "mode": { "type": "string", "enum": ["literal", "regex"], "description": "Search mode. Defaults to literal; regex uses Rust regex syntax." },
+                "case_mode": { "type": "string", "enum": ["insensitive", "sensitive", "smart"], "description": "Case handling. smart is case-insensitive unless the query contains uppercase. If case_sensitive is provided, it overrides case_mode for backward compatibility." },
+                "case_sensitive": { "type": "boolean", "description": "Legacy override for case matching. When set, true forces sensitive and false forces insensitive, taking precedence over case_mode." },
+                "max_results": { "type": "integer", "description": "Maximum matches to return. Defaults to 100; 0 returns no matches." },
+                "includes": { "type": "array", "items": { "type": "string" }, "description": "Glob include filters relative to searched roots, e.g. **/*.rs." },
+                "excludes": { "type": "array", "items": { "type": "string" }, "description": "Glob exclude filters relative to searched roots." },
+                "context_lines": { "type": "integer", "description": "Number of before/after context lines per match. Values are capped at 10." },
+                "max_line_length": { "type": "integer", "description": "Maximum displayed characters per matched line before truncation." },
+                "explain_no_results": { "type": "boolean", "description": "When true, include diagnostics explaining why no matches were found." }
             },
             "required": ["query"]
         }

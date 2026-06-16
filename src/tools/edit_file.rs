@@ -44,19 +44,19 @@ pub fn schema() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "path": { "type": "string" },
+                "path": { "type": "string", "description": "File path to edit. Relative paths resolve against the active workspace." },
                 "mode": {
                     "type": "string",
                     "enum": ["replace", "append", "prepend", "find_replace"],
                 },
-                "content": { "type": "string" },
-                "find": { "type": "string" },
-                "replace": { "type": "string" },
-                "replace_all": { "type": "boolean" },
-                "expected_replacements": { "type": "integer" },
-                "create_if_missing": { "type": "boolean" },
-                "create_parents": { "type": "boolean" },
-                "target_encoding": { "type": "string", "enum": ["UTF-8", "Windows-1252"] },
+                "content": { "type": "string", "description": "New content for replace, append, or prepend modes. Not used by find_replace." },
+                "find": { "type": "string", "description": "Exact text to find in find_replace mode. Required and must be non-empty for find_replace." },
+                "replace": { "type": "string", "description": "Replacement text for find_replace mode. Required for find_replace; may be an empty string to delete matches." },
+                "replace_all": { "type": "boolean", "description": "In find_replace mode, replace every match when true; replace only the first match when false or omitted." },
+                "expected_replacements": { "type": "integer", "description": "Optional safety check for find_replace. The tool fails unless the actual replacement count equals this value. Useful with replace_all to avoid accidental broad edits." },
+                "create_if_missing": { "type": "boolean", "description": "Allow creating the file when it does not exist. Defaults to false." },
+                "create_parents": { "type": "boolean", "description": "Create missing parent directories when writing. Defaults to true." },
+                "target_encoding": { "type": "string", "enum": ["UTF-8", "Windows-1252"], "description": "Output encoding. Defaults to the detected existing encoding, or UTF-8 for new files." },
                 "target_line_ending": {
                     "type": "string",
                     "enum": ["preserve", "lf", "crlf"],

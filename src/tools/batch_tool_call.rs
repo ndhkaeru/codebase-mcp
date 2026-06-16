@@ -37,17 +37,17 @@ fn flatten_tool_result(result: Value) -> Result<Value> {
 pub fn schema() -> Value {
     json!({
         "name": "batch_tool_call",
-        "description": "Run multiple tools sequentially in one request and flatten the combined results.",
+        "description": "Run multiple tools sequentially in one request and flatten the combined results. Accepts at most 20 calls and rejects recursive batch_tool_call.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "calls": {
+                "calls": { "description": "Ordered list of tool calls to run sequentially. Maximum 20 calls per request.",
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "tool": { "type": "string" },
-                            "args": { "type": "object" }
+                            "tool": { "type": "string", "description": "Tool name to call. batch_tool_call is not allowed recursively." },
+                            "args": { "type": "object", "description": "Arguments object for the selected tool." }
                         },
                         "required": ["tool", "args"]
                     }

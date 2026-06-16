@@ -17,8 +17,8 @@ pub fn schema() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "symbol": { "type": "string" },
-                "paths": { "type": "array", "items": { "type": "string" } }
+                "symbol": { "type": "string", "description": "Symbol name to locate, such as a function, method, type, class, or qualified name." },
+                "paths": { "type": "array", "items": { "type": "string" }, "description": "Search roots or files. Defaults to the active workspace. Scope this for large repositories." }
             },
             "required": ["symbol"]
         }
