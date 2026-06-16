@@ -360,12 +360,20 @@ tests/                 integration and behavior tests
 ## Project Status
 
 - **Package:** `codebase-mcp`
-- **Version:** `1.2.1`
+- **Version:** `1.3.0`
 - **Runtime:** Rust + Tokio
 - **Transport:** MCP `stdio`
 - **MCP protocol version:** `2024-11-05`
 - **Tool count:** 25
 - **License:** Apache-2.0
+
+### Release Notes - 1.3.0
+
+- Slims the exposed MCP toolset to core codebase, search, read, edit, and code-intelligence workflows.
+- Removes Markdown, JSON utility, SQLite, diff snippet, and undo/redo command tools from the public catalog.
+- Simplifies runtime configuration and workspace-root handling for session-aware clients.
+- Tunes default indexing limits for large Chromium-sized workspaces.
+- Adds server instructions and richer tool parameter descriptions to improve agent tool selection.
 
 ### Release Notes - 1.2.1
 
