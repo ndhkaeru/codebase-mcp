@@ -167,6 +167,59 @@ fn call_binary_server_tool_then_health(
     )
 }
 
+fn call_binary_server_tools(
+    current_dir: &Path,
+    initialize_params: Value,
+    tool_calls: Vec<(&str, Value)>,
+    settle_ms: u64,
+) -> Vec<Value> {
+    let exe = server_binary();
+    let mut command = Command::new(&exe);
+    command
+        .current_dir(current_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().unwrap();
+
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        writeln!(
+            stdin,
+            "{}",
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":initialize_params})
+        )
+        .unwrap();
+        writeln!(
+            stdin,
+            "{}",
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+        )
+        .unwrap();
+        stdin.flush().unwrap();
+        thread::sleep(Duration::from_millis(settle_ms));
+
+        for (index, (tool_name, tool_arguments)) in tool_calls.into_iter().enumerate() {
+            writeln!(
+                stdin,
+                "{}",
+                json!({"jsonrpc":"2.0","id":index + 2,"method":"tools/call","params":{"name":tool_name,"arguments":tool_arguments}})
+            )
+            .unwrap();
+        }
+    }
+
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with('{'))
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|response| response.get("id").and_then(|v| v.as_i64()).unwrap_or(0) >= 2)
+        .map(|response| decode_tool_rpc_response(&response))
+        .collect()
+}
+
 fn decode_tool_rpc_response(rpc: &Value) -> Value {
     serde_json::from_str(
         rpc.get("result")
@@ -521,6 +574,69 @@ fn test_tool_call_auto_indexes_workspace_from_request_path() {
             .get("index_last_request_source")
             .and_then(|v| v.as_str()),
         Some("tool_call:read_file_range")
+    );
+}
+
+#[test]
+fn test_relative_paths_can_target_sibling_workspace_after_active_child_changes() {
+    let current_dir = tempdir().unwrap();
+    let workspace = tempdir().unwrap();
+    let api_dir = workspace.path().join("workboardapi");
+    let ui_dir = workspace.path().join("workboardui");
+    let api_search_dir = api_dir.join("src/redmine-sync");
+    let ui_search_dir = ui_dir.join("src/app/features/task-current");
+    fs::create_dir_all(&api_search_dir).unwrap();
+    fs::create_dir_all(&ui_search_dir).unwrap();
+    fs::write(
+        api_dir.join("Cargo.toml"),
+        "[package]\nname = \"api\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(ui_dir.join("package.json"), "{\"name\":\"ui\"}\n").unwrap();
+    fs::write(api_search_dir.join("import.rs"), "fn basicImport() {}\n").unwrap();
+    fs::write(
+        ui_search_dir.join("import.ts"),
+        "export const basicImport = true;\n",
+    )
+    .unwrap();
+
+    let responses = call_binary_server_tools(
+        current_dir.path(),
+        json!({
+            "workspaceFolders": [
+                { "uri": file_uri_for_test(workspace.path()) }
+            ]
+        }),
+        vec![
+            ("resolve_path", json!({ "path": api_dir.to_str().unwrap() })),
+            (
+                "text_search",
+                json!({
+                    "paths": [
+                        "workboardapi/src/redmine-sync",
+                        "workboardui/src/app/features/task-current"
+                    ],
+                    "query": "basicImport",
+                    "max_results": 50,
+                    "context_lines": 2
+                }),
+            ),
+        ],
+        300,
+    );
+
+    let text_search_result = responses.last().unwrap();
+    assert_eq!(
+        text_search_result
+            .get("total_returned")
+            .and_then(|v| v.as_u64()),
+        Some(2)
+    );
+    assert_eq!(
+        text_search_result
+            .get("files_searched")
+            .and_then(|v| v.as_u64()),
+        Some(2)
     );
 }
 

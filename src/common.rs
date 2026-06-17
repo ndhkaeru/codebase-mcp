@@ -191,7 +191,72 @@ pub fn resolve_tool_path(raw: &str) -> PathBuf {
         return canonicalize_if_exists(path);
     }
 
-    canonicalize_if_exists(default_tool_root().join(path))
+    canonicalize_if_exists(resolve_relative_tool_path(&path))
+}
+
+fn resolve_relative_tool_path(path: &Path) -> PathBuf {
+    let mut roots = Vec::new();
+
+    if let Some((root, _)) = preferred_workspace_root() {
+        push_unique_path(&mut roots, root);
+    }
+
+    for runtime in crate::indexer::get_runtime_snapshots() {
+        let root = canonicalize_if_exists(PathBuf::from(runtime.workspace_root));
+        push_unique_path(&mut roots, root.clone());
+        if let Some(parent) = root.parent() {
+            push_unique_path(&mut roots, parent.to_path_buf());
+        }
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        if let Some(root) = discover_workspace_root(&current_dir) {
+            push_unique_path(&mut roots, root);
+        }
+        push_unique_path(&mut roots, canonicalize_if_exists(current_dir));
+    }
+
+    roots
+        .into_iter()
+        .map(|root| root.join(path))
+        .max_by_key(|candidate| existing_ancestor_depth(candidate))
+        .unwrap_or_else(|| PathBuf::from(path))
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    let candidate_key = normalize_path_key(&candidate);
+    if paths
+        .iter()
+        .any(|existing| normalize_path_key(existing) == candidate_key)
+    {
+        return;
+    }
+
+    paths.push(candidate);
+}
+
+fn existing_ancestor_depth(path: &Path) -> usize {
+    let mut current = Some(path);
+    while let Some(candidate) = current {
+        if candidate.exists() {
+            return candidate.components().count();
+        }
+        current = candidate.parent();
+    }
+
+    0
+}
+
+fn normalize_path_key(path: &Path) -> String {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    #[cfg(windows)]
+    {
+        normalized.to_ascii_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        normalized
+    }
 }
 
 pub fn bounded_walk_threads() -> usize {
