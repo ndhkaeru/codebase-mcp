@@ -8,8 +8,9 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::task;
 
 use super::path_filters::{apply_walk_overrides, compile_patterns, parse_pattern_strings};
@@ -21,6 +22,25 @@ const MAX_RETURNED_MATCHES: usize = 1_000;
 const DEFAULT_MAX_LINE_LENGTH: usize = 240;
 const MAX_LINE_LENGTH: usize = 4_000;
 const MAX_SEARCH_FILE_BYTES: u64 = 5 * 1024 * 1024;
+const DEFAULT_FALLBACK_EXCLUDES: &[&str] = &[
+    "out/**",
+    "**/out/**",
+    "generated/**",
+    "**/generated/**",
+    ".git/**",
+    "**/.git/**",
+    "node_modules/**",
+    "**/node_modules/**",
+    "target/**",
+    "**/target/**",
+    "third_party/**",
+    "**/third_party/**",
+];
+
+static TOTAL_TEXT_SEARCHES: AtomicU64 = AtomicU64::new(0);
+static TOTAL_GREP_FALLBACKS: AtomicU64 = AtomicU64::new(0);
+static TOTAL_REFUSED_LARGE_SCOPE: AtomicU64 = AtomicU64::new(0);
+static LAST_SEARCH_DURATION_MS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Serialize, Debug)]
 pub struct SearchMatch {
@@ -60,6 +80,7 @@ struct SearchStats {
     invalid_paths: Vec<String>,
     files_considered: usize,
     files_searched: usize,
+    files_skipped_large: usize,
 }
 
 #[derive(Default)]
@@ -69,27 +90,35 @@ struct SharedSearchState {
     files_considered: AtomicUsize,
     files_searched: AtomicUsize,
     search_errors: AtomicUsize,
+    files_skipped_large: AtomicUsize,
     stop: AtomicBool,
+}
+
+#[derive(Debug)]
+struct FallbackPlan {
+    allow_grep: bool,
+    reason: Option<&'static str>,
 }
 
 pub fn schema() -> Value {
     json!({
         "name": "text_search",
-        "description": "Search files or directories using literal or regex matching. On very large repositories, pass scoped paths/includes; root-level grep fallback can be expensive when Tantivy content is not warmed.",
+        "description": "Search file contents with exact literal/regex verification. For large repos, use narrow paths first (for example src/module), prefer literal queries to use Tantivy candidate shortlisting, and check search_strategy/fallback_reason/warming_zones in the response. Root-wide searches may be planned/refused unless allow_expensive_fallback=true.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": { "type": "string", "description": "Search query. Interpreted as literal text unless mode is regex." },
-                "paths": { "type": "array", "items": { "type": "string" }, "description": "Files or directories to search. Defaults to the active workspace root. Scope this for large repositories." },
-                "mode": { "type": "string", "enum": ["literal", "regex"], "description": "Search mode. Defaults to literal; regex uses Rust regex syntax." },
+                "paths": { "type": "array", "items": { "type": "string" }, "description": "Files or directories to search. Defaults to the active workspace root. In large repositories, provide the narrowest directory or file scope; avoid ['.'] unless allow_expensive_fallback is intentional." },
+                "mode": { "type": "string", "enum": ["literal", "regex"], "description": "Search mode. Defaults to literal. Literal queries can use Tantivy to shortlist files before exact grep verification; regex always needs grep verification and should be scoped narrowly." },
                 "case_mode": { "type": "string", "enum": ["insensitive", "sensitive", "smart"], "description": "Case handling. smart is case-insensitive unless the query contains uppercase. If case_sensitive is provided, it overrides case_mode for backward compatibility." },
                 "case_sensitive": { "type": "boolean", "description": "Legacy override for case matching. When set, true forces sensitive and false forces insensitive, taking precedence over case_mode." },
                 "max_results": { "type": "integer", "description": "Maximum matches to return. Defaults to 100; 0 returns no matches." },
                 "includes": { "type": "array", "items": { "type": "string" }, "description": "Glob include filters relative to searched roots, e.g. **/*.rs." },
-                "excludes": { "type": "array", "items": { "type": "string" }, "description": "Glob exclude filters relative to searched roots." },
+                "excludes": { "type": "array", "items": { "type": "string" }, "description": "Glob exclude filters relative to searched roots. Expensive grep fallback also applies default excludes for build/generated/vendor directories unless the user directly scopes into them." },
                 "context_lines": { "type": "integer", "description": "Number of before/after context lines per match. Values are capped at 10." },
                 "max_line_length": { "type": "integer", "description": "Maximum displayed characters per matched line before truncation." },
-                "explain_no_results": { "type": "boolean", "description": "When true, include diagnostics explaining why no matches were found." }
+                "explain_no_results": { "type": "boolean", "description": "When true, include diagnostics explaining why no matches were found, including fallback/index context." },
+                "allow_expensive_fallback": { "type": "boolean", "description": "Set true to permit root-wide grep fallback in very large indexed workspaces. Default false protects agents from Chromium-scale timeouts; prefer scoping paths first." }
             },
             "required": ["query"]
         }
@@ -103,7 +132,18 @@ pub async fn execute(args: &Value) -> Result<Value> {
         .context("text_search background task failed to join")?
 }
 
+pub fn search_telemetry() -> Value {
+    json!({
+        "total_text_searches": TOTAL_TEXT_SEARCHES.load(Ordering::Relaxed),
+        "total_grep_fallbacks": TOTAL_GREP_FALLBACKS.load(Ordering::Relaxed),
+        "total_refused_large_scope": TOTAL_REFUSED_LARGE_SCOPE.load(Ordering::Relaxed),
+        "last_search_duration_ms": LAST_SEARCH_DURATION_MS.load(Ordering::Relaxed)
+    })
+}
+
 fn execute_blocking(args: Value) -> Result<Value> {
+    let started_at = Instant::now();
+    TOTAL_TEXT_SEARCHES.fetch_add(1, Ordering::Relaxed);
     let query = args
         .get("query")
         .and_then(|v| v.as_str())
@@ -153,9 +193,16 @@ fn execute_blocking(args: Value) -> Result<Value> {
         .get("explain_no_results")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let allow_expensive_fallback = args
+        .get("allow_expensive_fallback")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let include_globs = parse_pattern_strings(args.get("includes"));
-    let exclude_globs = parse_pattern_strings(args.get("excludes"));
+    let user_exclude_globs = parse_pattern_strings(args.get("excludes"));
+    let default_exclude_globs = default_fallback_excludes(&input_paths, &user_exclude_globs);
+    let mut exclude_globs = user_exclude_globs.clone();
+    exclude_globs.extend(default_exclude_globs.iter().cloned());
     let includes = Arc::new(compile_patterns(&include_globs)?);
     let excludes = Arc::new(compile_patterns(&exclude_globs)?);
     let pattern = Arc::new(match mode {
@@ -166,6 +213,7 @@ fn execute_blocking(args: Value) -> Result<Value> {
 
     let includes_applied = !includes.is_empty();
     let excludes_applied = !excludes.is_empty();
+    let default_excludes_applied = !default_exclude_globs.is_empty();
     let shared = Arc::new(SharedSearchState::default());
     let mut stats = SearchStats {
         paths_received: input_paths.len(),
@@ -175,14 +223,25 @@ fn execute_blocking(args: Value) -> Result<Value> {
     let mut content_index_used = false;
     let mut content_index_partial = false;
     let mut content_index_zones = Vec::<String>::new();
+    let mut warming_zones = Vec::<String>::new();
+    let mut fallback_reasons = Vec::<String>::new();
+    let mut candidate_count = 0usize;
+    let mut candidate_limit = 0usize;
+    let mut candidates_truncated = false;
     let mut run_grep_fallback = true;
 
     if mode == SearchMode::Literal && max_results > 0 {
-        let candidate_limit = max_results.saturating_mul(64).max(256);
-        let index_result = query_tantivy_content_candidates(&input_paths, query, candidate_limit);
+        let requested_candidate_limit = max_results.saturating_mul(64).max(256);
+        let index_result =
+            query_tantivy_content_candidates(&input_paths, query, requested_candidate_limit);
         content_index_used = index_result.content_index_used;
         content_index_partial = index_result.content_index_partial;
-        content_index_zones = index_result.zones;
+        content_index_zones = index_result.zones.clone();
+        warming_zones = index_result.warming_zones.clone();
+        fallback_reasons.extend(index_result.fallback_reasons.clone());
+        candidate_count = index_result.candidate_count;
+        candidate_limit = index_result.candidate_limit;
+        candidates_truncated = index_result.candidates_truncated;
 
         if content_index_used {
             let matcher = build_matcher(&pattern, case_sensitive_effective)
@@ -206,39 +265,59 @@ fn execute_blocking(args: Value) -> Result<Value> {
                 search_strategy = "tantivy";
             }
         }
+    } else if mode == SearchMode::Regex {
+        fallback_reasons.push("regex_mode_requires_grep".to_string());
+    } else if max_results == 0 {
+        fallback_reasons.push("max_results_zero".to_string());
     }
 
     if run_grep_fallback {
         if content_index_used {
             search_strategy = "mixed";
         }
-        for input_path in &input_paths {
-            if max_results > 0 && shared.matches.lock().map(|m| m.len()).unwrap_or(0) >= max_results
-            {
-                shared.stop.store(true, Ordering::Relaxed);
-                break;
+        let fallback_plan = plan_grep_fallback(&input_paths, allow_expensive_fallback);
+        if !fallback_plan.allow_grep {
+            search_strategy = "refused_large_scope";
+            TOTAL_REFUSED_LARGE_SCOPE.fetch_add(1, Ordering::Relaxed);
+            if let Some(reason) = fallback_plan.reason {
+                fallback_reasons.push(reason.to_string());
             }
+            record_input_path_validity(&input_paths, &mut stats);
+        } else {
+            TOTAL_GREP_FALLBACKS.fetch_add(1, Ordering::Relaxed);
+            for input_path in &input_paths {
+                if max_results > 0
+                    && shared.matches.lock().map(|m| m.len()).unwrap_or(0) >= max_results
+                {
+                    shared.stop.store(true, Ordering::Relaxed);
+                    break;
+                }
 
-            process_input_path(
-                input_path,
-                &include_globs,
-                &exclude_globs,
-                Arc::clone(&includes),
-                Arc::clone(&excludes),
-                Arc::clone(&pattern),
-                case_sensitive_effective,
-                context_lines,
-                max_results,
-                max_line_length,
-                Arc::clone(&shared),
-                &mut stats,
-            )?;
+                process_input_path(
+                    input_path,
+                    &include_globs,
+                    &exclude_globs,
+                    Arc::clone(&includes),
+                    Arc::clone(&excludes),
+                    Arc::clone(&pattern),
+                    case_sensitive_effective,
+                    context_lines,
+                    max_results,
+                    max_line_length,
+                    Arc::clone(&shared),
+                    &mut stats,
+                )?;
+            }
         }
     } else {
         record_input_path_validity(&input_paths, &mut stats);
     }
+    fallback_reasons.sort();
+    fallback_reasons.dedup();
 
     let search_errors = shared.search_errors.load(Ordering::Relaxed);
+    let duration_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    LAST_SEARCH_DURATION_MS.store(duration_ms, Ordering::Relaxed);
     let mut matches = match Arc::try_unwrap(shared) {
         Ok(state) => state
             .matches
@@ -267,8 +346,11 @@ fn execute_blocking(args: Value) -> Result<Value> {
             "invalid_paths": stats.invalid_paths,
             "files_considered": stats.files_considered,
             "files_searched": stats.files_searched,
+            "files_skipped_large": stats.files_skipped_large,
             "includes_applied": includes_applied,
-            "excludes_applied": excludes_applied
+            "excludes_applied": excludes_applied,
+            "default_excludes_applied": default_excludes_applied,
+            "fallback_reason": fallback_reasons
         }))
     } else {
         None
@@ -281,15 +363,28 @@ fn execute_blocking(args: Value) -> Result<Value> {
         "limit_reason": if limit_reached { Some("max_results") } else { None },
         "files_considered": stats.files_considered,
         "files_searched": stats.files_searched,
+        "files_skipped_large": stats.files_skipped_large,
         "search_errors": search_errors,
+        "duration_ms": duration_ms,
         "mode": mode,
         "case_mode": case_mode,
         "max_line_length": max_line_length,
-        "engine": "grep_searcher/ignore",
+        "engine": engine_for_strategy(search_strategy),
         "search_strategy": search_strategy,
+        "candidate_engine": if candidate_limit > 0 { Some("tantivy") } else { None },
+        "verification_engine": "grep_searcher",
         "content_index_used": content_index_used,
         "content_index_partial": content_index_partial,
-        "content_index_zones": content_index_zones
+        "content_index_zones": content_index_zones,
+        "warming_zones": warming_zones,
+        "fallback_reason": fallback_reasons,
+        "candidate_count": candidate_count,
+        "candidate_limit": candidate_limit,
+        "candidates_truncated": candidates_truncated,
+        "default_excludes_applied": default_excludes_applied,
+        "default_excludes": default_exclude_globs,
+        "allow_expensive_fallback": allow_expensive_fallback,
+        "suggested_next_query": suggested_next_query(&input_paths, search_strategy)
     });
 
     if let Some(no_results) = no_results {
@@ -564,6 +659,7 @@ fn search_candidate(
     };
 
     if meta.len() > MAX_SEARCH_FILE_BYTES {
+        shared.files_skipped_large.fetch_add(1, Ordering::Relaxed);
         return;
     }
 
@@ -638,6 +734,7 @@ fn build_searcher(context_lines: usize) -> Searcher {
 fn merge_shared_stats(shared: &SharedSearchState, stats: &mut SearchStats) {
     stats.files_considered = shared.files_considered.load(Ordering::Relaxed);
     stats.files_searched = shared.files_searched.load(Ordering::Relaxed);
+    stats.files_skipped_large = shared.files_skipped_large.load(Ordering::Relaxed);
 }
 
 fn parse_mode(raw: Option<&str>) -> Result<SearchMode> {
@@ -760,7 +857,7 @@ fn search_scope_warnings(input_paths: &[PathBuf], search_strategy: &str) -> Vec<
         };
         if indexed_root == canonical_path {
             warnings.push(format!(
-                "Search used {} at indexed workspace root '{}'; scope paths/includes or warm a Tantivy content zone for faster large-repo searches.",
+                "Search used {} at indexed workspace root '{}'. For large repos, retry with a narrower paths value (for example a component directory), use a literal query when possible, or set allow_expensive_fallback=true only when a full grep scan is intentional.",
                 search_strategy,
                 canonical_path.to_string_lossy()
             ));
@@ -770,6 +867,82 @@ fn search_scope_warnings(input_paths: &[PathBuf], search_strategy: &str) -> Vec<
     warnings.sort();
     warnings.dedup();
     warnings
+}
+
+fn engine_for_strategy(search_strategy: &str) -> &'static str {
+    match search_strategy {
+        "tantivy" => "tantivy+grep_verify",
+        "mixed" => "tantivy+grep_fallback",
+        "refused_large_scope" => "planner",
+        _ => "grep_searcher/ignore",
+    }
+}
+
+fn plan_grep_fallback(input_paths: &[PathBuf], allow_expensive_fallback: bool) -> FallbackPlan {
+    if allow_expensive_fallback {
+        return FallbackPlan {
+            allow_grep: true,
+            reason: None,
+        };
+    }
+
+    for input_path in input_paths {
+        let canonical_path = canonicalize_existing_path(input_path);
+        if !canonical_path.is_dir() {
+            continue;
+        }
+
+        let Some(indexed_root) = crate::indexer::indexed_workspace_root_for_path(&canonical_path)
+        else {
+            continue;
+        };
+        if indexed_root == canonical_path {
+            return FallbackPlan {
+                allow_grep: false,
+                reason: Some("large_scope_requires_explicit_fallback"),
+            };
+        }
+    }
+
+    FallbackPlan {
+        allow_grep: true,
+        reason: None,
+    }
+}
+
+fn default_fallback_excludes(input_paths: &[PathBuf], user_excludes: &[String]) -> Vec<String> {
+    if input_paths.iter().any(is_direct_vendor_or_generated_scope) {
+        return Vec::new();
+    }
+
+    DEFAULT_FALLBACK_EXCLUDES
+        .iter()
+        .filter(|pattern| !user_excludes.iter().any(|existing| existing == **pattern))
+        .map(|pattern| (*pattern).to_string())
+        .collect()
+}
+
+fn is_direct_vendor_or_generated_scope(path: &PathBuf) -> bool {
+    let normalized = normalize_path(&canonicalize_existing_path(path));
+    normalized.split('/').any(|part| {
+        matches!(
+            part,
+            "third_party" | "out" | "generated" | "node_modules" | "target"
+        )
+    })
+}
+
+fn suggested_next_query(input_paths: &[PathBuf], search_strategy: &str) -> Option<String> {
+    if search_strategy != "refused_large_scope" {
+        return None;
+    }
+
+    input_paths.first().map(|path| {
+        format!(
+            "Retry with a narrower paths value under '{}' or set allow_expensive_fallback=true for an intentional full grep scan.",
+            path.to_string_lossy()
+        )
+    })
 }
 
 fn relative_path_for_roots(path: &Path, roots: &[PathBuf]) -> String {

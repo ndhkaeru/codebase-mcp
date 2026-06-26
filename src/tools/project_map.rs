@@ -15,16 +15,16 @@ const MAX_CHILDREN_PER_DIR_LIMIT: usize = 5_000;
 pub fn schema() -> Value {
     json!({
         "name": "project_map",
-        "description": "Build a tree view of a project with optional size metadata. For very large repositories, scope path to a module and keep max_depth/max_children_per_dir low to avoid oversized responses.",
+        "description": "Build a tree view of a project with optional size metadata. Use this to choose a precise text_search scope; for very large repositories, scope path to a module and keep max_depth/max_children_per_dir low to avoid oversized responses.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "path": { "type": "string" },
-                "max_depth": { "type": "integer" },
-                "show_sizes": { "type": "boolean" },
-                "max_children_per_dir": { "type": "integer" },
-                "includes": { "type": "array", "items": { "type": "string" } },
-                "excludes": { "type": "array", "items": { "type": "string" } }
+                "path": { "type": "string", "description": "Directory to map. Prefer a subsystem path over workspace root in large repos." },
+                "max_depth": { "type": "integer", "description": "Maximum tree depth; use 1-3 for reconnaissance." },
+                "show_sizes": { "type": "boolean", "description": "Include file sizes when useful; omit for compact structure scans." },
+                "max_children_per_dir": { "type": "integer", "description": "Per-directory child cap; lower this for very large directories." },
+                "includes": { "type": "array", "items": { "type": "string" }, "description": "Optional glob include filters." },
+                "excludes": { "type": "array", "items": { "type": "string" }, "description": "Optional glob exclude filters for generated/build/vendor areas." }
             },
             "required": ["path"]
         }

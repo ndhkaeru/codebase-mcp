@@ -18,16 +18,16 @@ const MAX_FUZZY_RESULTS: usize = 500;
 pub fn schema() -> Value {
     json!({
         "name": "fuzzy_find",
-        "description": "Perform fuzzy path and file name search across one or more roots. On very large repositories, prefer concrete basename/path tokens and scoped paths; broad natural-language patterns can be skipped instead of walking the full tree when a complete metadata index is available.",
+        "description": "Perform fast fuzzy path and file-name search using the metadata/path index when available. Use this before text_search to discover precise directories/files in large repositories; prefer concrete basename/path tokens, target_type/extensions filters, and scoped paths over broad natural-language patterns.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "pattern": { "type": "string" },
-                "paths": { "type": "array", "items": { "type": "string" } },
-                "target_type": { "type": "string", "enum": ["file", "dir", "any"] },
-                "extensions": { "type": "array", "items": { "type": "string" } },
-                "max_depth": { "type": "integer" },
-                "max_results": { "type": "integer" }
+                "pattern": { "type": "string", "description": "Fuzzy path/name pattern. For best results in large repos, use distinctive path tokens such as browser net url_loader rather than a prose query." },
+                "paths": { "type": "array", "items": { "type": "string" }, "description": "Search roots or files. Defaults to the active workspace; scope this when you already know a subsystem." },
+                "target_type": { "type": "string", "enum": ["file", "dir", "any"], "description": "Limit matches to files, directories, or both. Use dir to find a good text_search scope." },
+                "extensions": { "type": "array", "items": { "type": "string" }, "description": "Optional file extensions without dots, e.g. rs or cc." },
+                "max_depth": { "type": "integer", "description": "Optional traversal depth for filesystem fallback." },
+                "max_results": { "type": "integer", "description": "Maximum ranked matches to return; defaults are capped to keep responses usable." }
             },
             "required": ["pattern"]
         }

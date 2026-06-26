@@ -20,14 +20,14 @@ const MAX_LINE_COUNT_BYTES_LIMIT: u64 = 20 * 1024 * 1024;
 pub fn schema() -> Value {
     json!({
         "name": "workspace_stats",
-        "description": "Summarize file, line, and language counts for a workspace path.",
+        "description": "Summarize file, line, and language counts for a workspace path. Use this to estimate repository size and decide whether text_search needs a narrow path/includes scope before content search.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "path": { "type": "string" },
-                "max_line_count_bytes": { "type": "integer" },
-                "includes": { "type": "array", "items": { "type": "string" } },
-                "excludes": { "type": "array", "items": { "type": "string" } }
+                "path": { "type": "string", "description": "Directory to summarize. In large repos, run on candidate subsystems rather than only workspace root." },
+                "max_line_count_bytes": { "type": "integer", "description": "Maximum bytes per file to count lines from; lower values keep scans fast." },
+                "includes": { "type": "array", "items": { "type": "string" }, "description": "Optional glob include filters, e.g. **/*.rs." },
+                "excludes": { "type": "array", "items": { "type": "string" }, "description": "Optional glob exclude filters for build/generated/vendor areas." }
             },
             "required": ["path"]
         }

@@ -1,5 +1,6 @@
 use crate::common::unix_timestamp_secs;
 use crate::indexer::{get_active_runtime_snapshot, get_runtime_snapshots, stale_index_after_secs};
+use crate::tools::text_search::search_telemetry;
 use crate::version::SERVER_VERSION;
 use anyhow::Result;
 use serde_json::{Value, json};
@@ -11,7 +12,7 @@ lazy_static::lazy_static! {
 pub fn schema() -> Value {
     json!({
         "name": "server_health",
-        "description": "Check server uptime and indexing health.",
+        "description": "Check server uptime and indexing health. Use this before broad searches in large repos: path_index powers fuzzy/path tools, content_index powers text_search Tantivy shortlisting and may only cover listed zones.",
         "inputSchema": {
             "type": "object",
             "properties": {}
@@ -231,6 +232,60 @@ pub async fn execute(_args: &Value) -> Result<Value> {
             json!(primary_last_refresh_completed_at),
         );
         object.insert("last_error".to_string(), json!(primary_last_error));
+        object.insert(
+            "path_index".to_string(),
+            json!({
+                "backend": primary_metadata_index_backend,
+                "status": primary_metadata_index_status,
+                "workspace_root": primary_workspace_root,
+                "workspace_source": primary_workspace_source,
+                "entries": primary_indexed_entries,
+                "files": primary_indexed_files_count,
+                "dirs": primary_indexed_dirs_count,
+                "loaded_from_disk": primary_loaded_from_disk,
+                "scan_complete": primary_scan_complete,
+                "last_scan_completed_at": primary_last_scan_completed_at,
+                "last_persisted_at": primary_last_persisted_at,
+                "stale_after_seconds": stale_index_after_secs()
+            }),
+        );
+        object.insert(
+            "content_index".to_string(),
+            json!({
+                "backend": primary_content_index_backend,
+                "status": primary_content_index_status,
+                "zones_indexed": primary_content_index_zones,
+                "partial": primary_content_index_partial,
+                "files": primary_indexed_content_files,
+                "bytes": primary_indexed_content_bytes,
+                "storage_dir": primary_index_storage_dir,
+                "index_size_bytes": primary_index_size_bytes,
+                "refresh_running": primary_refresh_running,
+                "last_refresh_started_at": primary_last_refresh_started_at,
+                "last_refresh_completed_at": primary_last_refresh_completed_at,
+                "last_error": primary_last_error
+            }),
+        );
+        object.insert(
+            "search_guidance".to_string(),
+            json!({
+                "text_search_best_practices": [
+                    "Prefer narrow paths over workspace-root searches in large repositories.",
+                    "Use literal mode when possible so Tantivy can shortlist candidate files before exact grep verification.",
+                    "If text_search returns warming_zones, retry the same scoped search after the zone finishes warming.",
+                    "Set allow_expensive_fallback=true only when a full grep scan is intentional."
+                ],
+                "diagnostic_fields": [
+                    "search_strategy",
+                    "fallback_reason",
+                    "content_index_used",
+                    "content_index_partial",
+                    "content_index_zones",
+                    "warming_zones"
+                ]
+            }),
+        );
+        object.insert("search_telemetry".to_string(), search_telemetry());
     }
 
     Ok(response)

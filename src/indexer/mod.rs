@@ -187,6 +187,24 @@ pub struct ContentCandidateResult {
     pub content_index_used: bool,
     pub content_index_partial: bool,
     pub zones: Vec<String>,
+    pub warming_zones: Vec<String>,
+    pub fallback_reasons: Vec<String>,
+    pub candidate_count: usize,
+    pub candidate_limit: usize,
+    pub candidates_truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ContentZoneStatus {
+    pub input_path: String,
+    pub workspace_root: Option<String>,
+    pub zone: Option<String>,
+    pub status: String,
+    pub ready: bool,
+    pub warming: bool,
+    pub indexed: bool,
+    pub partial: bool,
+    pub last_error: Option<String>,
 }
 
 struct IndexStore {
@@ -300,17 +318,33 @@ pub fn query_tantivy_content_candidates(
     query: &str,
     limit: usize,
 ) -> ContentCandidateResult {
-    if !tantivy_enabled() || !is_tantivy_query_compatible(query) || limit == 0 {
+    let mut fallback_reasons = Vec::new();
+    if !tantivy_enabled() {
+        fallback_reasons.push("content_index_disabled".to_string());
+    }
+    if !is_tantivy_query_compatible(query) {
+        fallback_reasons.push("query_not_tantivy_compatible".to_string());
+    }
+    if limit == 0 {
+        fallback_reasons.push("candidate_limit_zero".to_string());
+    }
+    if !fallback_reasons.is_empty() {
         return ContentCandidateResult {
             paths: Vec::new(),
             content_index_used: false,
             content_index_partial: false,
             zones: Vec::new(),
+            warming_zones: Vec::new(),
+            fallback_reasons,
+            candidate_count: 0,
+            candidate_limit: limit,
+            candidates_truncated: false,
         };
     }
 
     let mut out = Vec::new();
     let mut zones = Vec::new();
+    let mut warming_zones = Vec::new();
     let mut used = false;
     let mut partial = false;
 
@@ -318,23 +352,27 @@ pub fn query_tantivy_content_candidates(
         let canonical_path = canonicalize_or_original(path.clone());
         let Some((workspace_key, workspace_root)) = indexed_workspace_for_path(&canonical_path)
         else {
+            fallback_reasons.push("path_not_in_indexed_workspace".to_string());
             continue;
         };
         let zone = content_zone_for_path(&workspace_root, &canonical_path);
         if zone.is_empty() {
             partial = true;
+            fallback_reasons.push("root_scope_not_content_indexed".to_string());
             continue;
         }
         if !content_zone_ready(&workspace_key, &zone) {
-            schedule_content_zone_refresh(workspace_root, workspace_key, zone);
+            schedule_content_zone_refresh(workspace_root, workspace_key, zone.clone());
+            warming_zones.push(zone);
             partial = true;
+            fallback_reasons.push("content_zone_not_ready".to_string());
             continue;
         }
 
-        let Ok(paths) =
-            search_tantivy_zone(&workspace_root, query, limit.saturating_sub(out.len()))
-        else {
+        let remaining = limit.saturating_sub(out.len());
+        let Ok(paths) = search_tantivy_zone(&workspace_root, query, remaining) else {
             partial = true;
+            fallback_reasons.push("tantivy_search_error".to_string());
             continue;
         };
         if !paths.is_empty() {
@@ -349,13 +387,143 @@ pub fn query_tantivy_content_candidates(
 
     out.sort();
     out.dedup();
+    let candidate_count = out.len();
+    let candidates_truncated = out.len() > limit;
     out.truncate(limit);
+    fallback_reasons.sort();
+    fallback_reasons.dedup();
+    warming_zones.sort();
+    warming_zones.dedup();
+    zones.sort();
+    zones.dedup();
 
     ContentCandidateResult {
         paths: out,
         content_index_used: used,
         content_index_partial: partial,
         zones,
+        warming_zones,
+        fallback_reasons,
+        candidate_count,
+        candidate_limit: limit,
+        candidates_truncated,
+    }
+}
+
+pub fn content_status_for_paths(paths: &[PathBuf]) -> Vec<ContentZoneStatus> {
+    paths.iter().map(content_status_for_path).collect()
+}
+
+pub fn warm_content_index_paths(paths: &[PathBuf], force: bool) -> Vec<ContentZoneStatus> {
+    let mut out = Vec::new();
+    for path in paths {
+        let canonical_path = canonicalize_or_original(path.clone());
+        let Some((workspace_key, workspace_root)) = indexed_workspace_for_path(&canonical_path)
+        else {
+            out.push(content_status_for_path(path));
+            continue;
+        };
+        let zone = content_zone_for_path(&workspace_root, &canonical_path);
+        if zone.is_empty() {
+            out.push(ContentZoneStatus {
+                input_path: path.to_string_lossy().to_string(),
+                workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+                zone: None,
+                status: "root_scope_not_content_indexed".to_string(),
+                ready: false,
+                warming: false,
+                indexed: false,
+                partial: true,
+                last_error: None,
+            });
+            continue;
+        }
+
+        let current = content_status_for_path(path);
+        if force || !current.ready {
+            schedule_content_zone_refresh(workspace_root, workspace_key, zone.clone());
+        }
+        out.push(content_status_for_path(path));
+    }
+    out
+}
+
+fn content_status_for_path(path: &PathBuf) -> ContentZoneStatus {
+    let canonical_path = canonicalize_or_original(path.clone());
+    let Some((workspace_key, workspace_root)) = indexed_workspace_for_path(&canonical_path) else {
+        return ContentZoneStatus {
+            input_path: path.to_string_lossy().to_string(),
+            workspace_root: None,
+            zone: None,
+            status: "path_not_in_indexed_workspace".to_string(),
+            ready: false,
+            warming: false,
+            indexed: false,
+            partial: false,
+            last_error: None,
+        };
+    };
+    let zone = content_zone_for_path(&workspace_root, &canonical_path);
+    if zone.is_empty() {
+        return ContentZoneStatus {
+            input_path: path.to_string_lossy().to_string(),
+            workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+            zone: None,
+            status: "root_scope_not_content_indexed".to_string(),
+            ready: false,
+            warming: false,
+            indexed: false,
+            partial: true,
+            last_error: None,
+        };
+    }
+
+    match INDEX_RUNTIMES
+        .read()
+        .ok()
+        .and_then(|guard| guard.get(&workspace_key).cloned())
+    {
+        Some(state) => {
+            let indexed = state
+                .content_index_zones
+                .iter()
+                .any(|existing| existing == &zone);
+            let warming = state.content_index_status == "warming" && !indexed;
+            let ready = state.content_index_status == "ready" && indexed;
+            let status = if ready {
+                "ready".to_string()
+            } else if warming {
+                "warming".to_string()
+            } else if indexed {
+                state.content_index_status.clone()
+            } else if state.content_index_status == "error" {
+                "error".to_string()
+            } else {
+                "not_indexed".to_string()
+            };
+            ContentZoneStatus {
+                input_path: path.to_string_lossy().to_string(),
+                workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+                zone: Some(zone),
+                status,
+                ready,
+                warming,
+                indexed,
+                partial: state.content_index_partial,
+                last_error: state.last_error.clone(),
+            }
+        }
+        None => ContentZoneStatus {
+            input_path: path.to_string_lossy().to_string(),
+            workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+            zone: Some(zone),
+            status: "workspace_runtime_unavailable".to_string(),
+            ready: false,
+            warming: false,
+            indexed: false,
+            partial: false,
+            last_error: None,
+        },
     }
 }
 
