@@ -911,7 +911,10 @@ fn plan_grep_fallback(input_paths: &[PathBuf], allow_expensive_fallback: bool) -
 }
 
 fn default_fallback_excludes(input_paths: &[PathBuf], user_excludes: &[String]) -> Vec<String> {
-    if input_paths.iter().any(is_direct_vendor_or_generated_scope) {
+    if input_paths
+        .iter()
+        .any(|path| is_direct_vendor_or_generated_scope(path.as_path()))
+    {
         return Vec::new();
     }
 
@@ -922,7 +925,7 @@ fn default_fallback_excludes(input_paths: &[PathBuf], user_excludes: &[String]) 
         .collect()
 }
 
-fn is_direct_vendor_or_generated_scope(path: &PathBuf) -> bool {
+fn is_direct_vendor_or_generated_scope(path: &Path) -> bool {
     let normalized = normalize_path(&canonicalize_existing_path(path));
     normalized.split('/').any(|part| {
         matches!(

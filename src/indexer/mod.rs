@@ -411,7 +411,10 @@ pub fn query_tantivy_content_candidates(
 }
 
 pub fn content_status_for_paths(paths: &[PathBuf]) -> Vec<ContentZoneStatus> {
-    paths.iter().map(content_status_for_path).collect()
+    paths
+        .iter()
+        .map(|path| content_status_for_path(path.as_path()))
+        .collect()
 }
 
 pub fn warm_content_index_paths(paths: &[PathBuf], force: bool) -> Vec<ContentZoneStatus> {
@@ -448,8 +451,8 @@ pub fn warm_content_index_paths(paths: &[PathBuf], force: bool) -> Vec<ContentZo
     out
 }
 
-fn content_status_for_path(path: &PathBuf) -> ContentZoneStatus {
-    let canonical_path = canonicalize_or_original(path.clone());
+fn content_status_for_path(path: &Path) -> ContentZoneStatus {
+    let canonical_path = canonicalize_or_original(path.to_path_buf());
     let Some((workspace_key, workspace_root)) = indexed_workspace_for_path(&canonical_path) else {
         return ContentZoneStatus {
             input_path: path.to_string_lossy().to_string(),
