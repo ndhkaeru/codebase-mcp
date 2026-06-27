@@ -12,11 +12,11 @@ pub const DEFAULT_AST_FILE_SIZE_LIMIT: u64 = 2 * 1024 * 1024;
 const CODE_EXTENSIONS: &[&str] = &[
     "c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx", "inc", "inl", "asm", "s", "S", "rs", "js",
     "jsx", "ts", "tsx", "mjs", "cjs", "vue", "svelte", "py", "pyi", "rb", "php", "java", "kt",
-    "kts", "scala", "go", "swift", "dart", "cs", "fs", "fsx", "sh", "bash", "zsh", "ps1", "bat",
-    "cmd", "json", "yaml", "yml", "toml", "xml", "html", "htm", "css", "scss", "less", "sql",
-    "proto", "graphql", "gql", "gn", "gni", "gyp", "gypi", "cmake", "mk", "mak", "md", "txt",
-    "rst", "cfg", "ini", "conf", "lua", "r", "m", "mm", "d", "zig", "nim", "v", "ex", "exs", "elm",
-    "clj",
+    "kts", "scala", "go", "swift", "nix", "dart", "cs", "fs", "fsx", "sh", "bash", "zsh", "ps1",
+    "bat", "cmd", "json", "yaml", "yml", "toml", "xml", "html", "htm", "css", "scss", "less",
+    "sql", "proto", "graphql", "gql", "gn", "gni", "gyp", "gypi", "cmake", "mk", "mak", "md",
+    "txt", "rst", "cfg", "ini", "conf", "lua", "r", "m", "mm", "d", "zig", "nim", "v", "ex", "exs",
+    "elm", "clj",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,6 +32,7 @@ pub enum LanguageKind {
     Php,
     Ruby,
     Swift,
+    Nix,
     ObjectiveC,
 }
 
@@ -61,6 +62,7 @@ pub fn parse_language_filter(raw: Option<&str>) -> Result<Option<LanguageKind>> 
         "php" => Ok(Some(LanguageKind::Php)),
         "ruby" | "rb" => Ok(Some(LanguageKind::Ruby)),
         "swift" => Ok(Some(LanguageKind::Swift)),
+        "nix" => Ok(Some(LanguageKind::Nix)),
         "objc" | "objective-c" | "objectivec" | "m" | "mm" => Ok(Some(LanguageKind::ObjectiveC)),
         other => Err(anyhow::anyhow!("Unsupported language '{}'", other)),
     }
@@ -127,6 +129,7 @@ pub fn detect_language(path: &Path) -> Option<(LanguageKind, &'static str, Langu
             "Swift",
             tree_sitter_swift::LANGUAGE.into(),
         )),
+        "nix" => Some((LanguageKind::Nix, "Nix", tree_sitter_nix::LANGUAGE.into())),
         "m" | "mm" => Some((
             LanguageKind::ObjectiveC,
             "Objective-C",
@@ -301,6 +304,7 @@ pub fn child_field_text<'a>(node: &Node<'a>, field: &str, source: &'a [u8]) -> O
 
 pub fn declaration_name<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
     child_field_text(node, "name", source)
+        .or_else(|| child_field_text(node, "attrpath", source))
         .or_else(|| child_field_text(node, "function", source))
         .or_else(|| child_field_text(node, "method", source))
         .or_else(|| {
@@ -363,6 +367,7 @@ fn is_identifier_like_node(kind: &str) -> bool {
             | "operator_name"
             | "operator"
             | "simple_identifier"
+            | "attrpath"
     )
 }
 
@@ -425,6 +430,7 @@ pub fn is_call_node(kind: &str) -> bool {
             | "invocation_expression"
             | "method_invocation"
             | "function_call_expression"
+            | "apply_expression"
             | "member_call_expression"
             | "nullsafe_member_call_expression"
             | "scoped_call_expression"
@@ -498,6 +504,9 @@ pub fn is_symbol_node(kind: &str) -> bool {
             | "protocol_declaration"
             | "protocol_function_declaration"
             | "enum_entry"
+            | "binding"
+            | "formal"
+            | "function_expression"
             | "class_interface"
             | "class_implementation"
             | "implementation_definition"
@@ -517,8 +526,10 @@ pub fn is_function_like_node(kind: &str) -> bool {
             | "method_declaration"
             | "constructor_declaration"
             | "destructor_declaration"
+            | "binding"
             | "method"
             | "singleton_method"
+            | "function_expression"
             | "init_declaration"
             | "protocol_function_declaration"
     )

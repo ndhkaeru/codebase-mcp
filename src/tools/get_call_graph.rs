@@ -10,7 +10,7 @@ use crate::tools::ast_support::{
 pub fn schema() -> Value {
     json!({
         "name": "get_call_graph",
-        "description": "List outbound calls made from a function or symbol using Tree-sitter AST support for Rust, JavaScript/TypeScript, Python, C/C++, Go, Java, C#, PHP, Ruby, Swift, and Objective-C.",
+        "description": "List outbound calls made from a function or symbol using Tree-sitter AST support for Rust, JavaScript/TypeScript, Python, C/C++, Go, Java, C#, PHP, Ruby, Swift, Nix, and Objective-C.",
         "inputSchema": {
             "type": "object",
             "properties": {

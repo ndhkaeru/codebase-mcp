@@ -18,7 +18,7 @@ const HEURISTIC_WINDOW_LINES: usize = 80;
 pub fn schema() -> Value {
     json!({
         "name": "read_symbol_body",
-        "description": "Read a symbol body with AST-first resolution for Rust, JavaScript/TypeScript, Python, C/C++, Go, Java, C#, PHP, Ruby, Swift, and Objective-C, then heuristic fallback for other code-like files.",
+        "description": "Read a symbol body with AST-first resolution for Rust, JavaScript/TypeScript, Python, C/C++, Go, Java, C#, PHP, Ruby, Swift, Nix, and Objective-C, then heuristic fallback for other code-like files.",
         "inputSchema": {
             "type": "object",
             "properties": {
