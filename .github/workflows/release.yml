@@ -11,7 +11,7 @@ env:
   RUSTUP_MAX_RETRIES: 10
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
@@ -84,6 +84,8 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout full history for tags and changelog
         uses: actions/checkout@v4
