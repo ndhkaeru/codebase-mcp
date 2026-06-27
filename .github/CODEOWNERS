@@ -1,0 +1,20 @@
+# Require maintainer review for security-sensitive surfaces.
+# Replace @ndhkaeru with a team handle if the repository adds one.
+
+* @ndhkaeru
+
+.github/** @ndhkaeru
+Cargo.toml @ndhkaeru
+Cargo.lock @ndhkaeru
+deny.toml @ndhkaeru
+src/main.rs @ndhkaeru
+src/indexer/** @ndhkaeru
+src/security/** @ndhkaeru
+src/tools/create_file.rs @ndhkaeru
+src/tools/create_directory.rs @ndhkaeru
+src/tools/delete_file.rs @ndhkaeru
+src/tools/edit_file.rs @ndhkaeru
+src/tools/convert_file_format.rs @ndhkaeru
+src/tools/text_search.rs @ndhkaeru
+src/tools/content_index_status.rs @ndhkaeru
+src/tools/warm_content_index.rs @ndhkaeru

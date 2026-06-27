@@ -28,9 +28,21 @@ Everything runs on your machine. There is no external indexing service, no netwo
 
 ### 1. Get the binary
 
-**Download a prebuilt binary (Windows):**
-Grab the latest `codebase-mcp-windows-x64.exe` or `codebase-mcp-windows-arm64.exe` from the
-[Releases page](https://github.com/hungproh99/codebase-mcp/releases).
+**Install with one command (Linux/macOS):**
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/ndhkaeru/codebase-mcp/releases/latest/download/codebase-mcp-installer.sh | sh
+```
+
+**Install with one command (Windows, PowerShell):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/ndhkaeru/codebase-mcp/releases/latest/download/codebase-mcp-installer.ps1 | iex"
+```
+
+**Or download a prebuilt archive** for your platform (Linux, macOS, Windows — x64 and arm64)
+from the [Releases page](https://github.com/ndhkaeru/codebase-mcp/releases). Each archive ships
+the binary plus `LICENSE`/`README.md`, with a `.sha256` checksum alongside.
 
 **Build from source (all platforms, requires the Rust stable toolchain):**
 

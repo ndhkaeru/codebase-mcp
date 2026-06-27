@@ -44,6 +44,46 @@ async fn test_git_related_tools_are_not_exposed_or_dispatchable() {
 }
 
 #[tokio::test]
+async fn test_content_index_tools_are_exposed_and_report_path_status() {
+    let listed_tools = tools::list_tools();
+    assert!(
+        listed_tools
+            .iter()
+            .any(|tool| tool.get("name").and_then(|v| v.as_str()) == Some("content_index_status"))
+    );
+    assert!(
+        listed_tools
+            .iter()
+            .any(|tool| tool.get("name").and_then(|v| v.as_str()) == Some("warm_content_index"))
+    );
+
+    let dir = tempdir().unwrap();
+    let status_result = tools::call_tool(json!({
+        "name": "content_index_status",
+        "arguments": { "paths": [dir.path().to_str().unwrap()] }
+    }))
+    .await
+    .unwrap();
+    let status_text = status_result
+        .get("content")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("text"))
+        .and_then(|v| v.as_str())
+        .unwrap();
+    let status_json: serde_json::Value = serde_json::from_str(status_text).unwrap();
+    assert_eq!(status_json.get("total").and_then(|v| v.as_u64()), Some(1));
+
+    let warm_result = tools::call_tool(json!({
+        "name": "warm_content_index",
+        "arguments": { "paths": [dir.path().to_str().unwrap()], "wait_ms": 0 }
+    }))
+    .await
+    .unwrap();
+    assert!(warm_result.get("content").is_some());
+}
+
+#[tokio::test]
 async fn test_text_search_supports_explicit_modes_and_preserves_raw_line_text() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("sample.rs");
@@ -130,6 +170,82 @@ async fn test_text_search_applies_excludes_to_explicit_file_paths() {
             .and_then(|v| v.get("reason"))
             .and_then(|v| v.as_str()),
         Some("no_candidate_files")
+    );
+}
+
+#[tokio::test]
+async fn test_text_search_reports_fallback_diagnostics_for_regex() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("sample.rs");
+    fs::write(&path, "TODO\n").unwrap();
+
+    let res = text_search::execute(&json!({
+        "query": "TODO|FIXME",
+        "paths": [path.to_str().unwrap()],
+        "mode": "regex",
+        "explain_no_results": true
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        res.get("search_strategy").and_then(|v| v.as_str()),
+        Some("grep_fallback")
+    );
+    assert!(
+        res.get("fallback_reason")
+            .and_then(|v| v.as_array())
+            .is_some_and(|items| items.iter().any(|item| item == "regex_mode_requires_grep"))
+    );
+    assert_eq!(
+        res.get("verification_engine").and_then(|v| v.as_str()),
+        Some("grep_searcher")
+    );
+}
+
+#[tokio::test]
+async fn test_text_search_applies_default_fallback_excludes_but_allows_direct_scope() {
+    let dir = tempdir().unwrap();
+    let vendor_dir = dir.path().join("third_party");
+    fs::create_dir(&vendor_dir).unwrap();
+    let vendor_file = vendor_dir.join("lib.rs");
+    fs::write(&vendor_file, "needle\n").unwrap();
+
+    let root_res = text_search::execute(&json!({
+        "query": "needle",
+        "paths": [dir.path().to_str().unwrap()],
+        "explain_no_results": true
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        root_res
+            .get("default_excludes_applied")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        root_res.get("total_returned").and_then(|v| v.as_u64()),
+        Some(0)
+    );
+
+    let direct_res = text_search::execute(&json!({
+        "query": "needle",
+        "paths": [vendor_dir.to_str().unwrap()]
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        direct_res
+            .get("default_excludes_applied")
+            .and_then(|v| v.as_bool()),
+        Some(false)
+    );
+    assert_eq!(
+        direct_res.get("total_returned").and_then(|v| v.as_u64()),
+        Some(1)
     );
 }
 

@@ -7,6 +7,7 @@ mod path_filters;
 
 pub mod batch_tool_call;
 pub mod compare_symbols;
+pub mod content_index_status;
 pub mod convert_file_format;
 pub mod count_file_lines;
 pub mod create_directory;
@@ -29,6 +30,7 @@ pub mod read_symbol_body;
 pub mod resolve_path;
 pub mod server_health;
 pub mod text_search;
+pub mod warm_content_index;
 pub mod workspace_stats;
 
 pub fn list_tools() -> Vec<Value> {
@@ -53,6 +55,8 @@ pub fn list_tools() -> Vec<Value> {
         get_symbols::schema(),
         workspace_stats::schema(),
         server_health::schema(),
+        content_index_status::schema(),
+        warm_content_index::schema(),
         peek_archive::schema(),
         find_definition::schema(),
         find_references::schema(),
@@ -87,6 +91,8 @@ pub async fn call_tool(params: Value) -> Result<Value> {
         "get_symbols" => get_symbols::execute(&arguments).await,
         "workspace_stats" => workspace_stats::execute(&arguments).await,
         "server_health" => server_health::execute(&arguments).await,
+        "content_index_status" => content_index_status::execute(&arguments).await,
+        "warm_content_index" => warm_content_index::execute(&arguments).await,
         "peek_archive" => peek_archive::execute(&arguments).await,
         "find_definition" => find_definition::execute(&arguments).await,
         "find_references" => find_references::execute(&arguments).await,
