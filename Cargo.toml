@@ -5,6 +5,7 @@ edition = "2024"
 license = "Apache-2.0"
 description = "High-performance MCP server for filesystem and code intelligence workflows"
 readme = "README.md"
+repository = "https://github.com/ndhkaeru/codebase-mcp"
 
 [dependencies]
 anyhow = "1.0.102"
@@ -54,3 +55,8 @@ tempfile = "3.26.0"
 codegen-units = 1
 lto = "thin"
 strip = "symbols"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
