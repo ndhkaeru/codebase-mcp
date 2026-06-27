@@ -1,0 +1,4 @@
+# Spell-check configuration for crate-ci/typos.
+[default.extend-words]
+# File-extension token in src/tools/ast_support.rs, not a misspelling of "make".
+mak = "mak"
