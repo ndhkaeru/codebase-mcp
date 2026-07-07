@@ -34,12 +34,6 @@ Everything runs on your machine. There is no external indexing service, no netwo
 npx -y @ndhkaeru/codebase-mcp@latest
 ```
 
-**Run with Docker:**
-
-```bash
-docker run --rm -i -v "$PWD:/workspace" ghcr.io/ndhkaeru/codebase-mcp:latest
-```
-
 **Install with one command (Linux/macOS):**
 
 ```bash
@@ -278,7 +272,7 @@ Batch related calls in one MCP round trip:
 
 ## Client Configuration
 
-Use the release binary, npm wrapper, or Docker image as a `stdio` MCP server. On Windows binary installs, point `command` to the `.exe` file.
+Use the release binary or npm wrapper as a `stdio` MCP server. On Windows binary installs, point `command` to the `.exe` file.
 
 <details>
 <summary><strong>npx package</strong></summary>
@@ -295,20 +289,6 @@ Use the release binary, npm wrapper, or Docker image as a `stdio` MCP server. On
 ```
 </details>
 
-<details>
-<summary><strong>Docker image</strong></summary>
-
-```json
-{
-  "mcpServers": {
-    "codebase-mcp": {
-      "command": "docker",
-      "args": ["run", "--rm", "-i", "-v", "${workspaceFolder}:/workspace", "ghcr.io/ndhkaeru/codebase-mcp:latest"]
-    }
-  }
-}
-```
-</details>
 
 <details>
 <summary><strong>Claude Desktop</strong></summary>
@@ -414,13 +394,12 @@ LMDB stores path metadata. Tantivy is used as an optional sidecar for warmed con
 
 ## Shipping
 
-Release tags are built by `cargo-dist` and published to GitHub Releases. Additional product channels mirror the Playwright MCP style:
+Release tags are built by `cargo-dist` and published to GitHub Releases. Additional product channels mirror the lightweight Playwright MCP `npx` style:
 
 - **npm/npx**: `packages/npm` provides the `codebase-mcp` bin wrapper. On tag builds, `.github/workflows/npm.yml` prepares platform binaries from GitHub Release artifacts and publishes when `NPM_TOKEN` is configured.
-- **Docker/GHCR**: `.github/workflows/docker.yml` publishes `ghcr.io/ndhkaeru/codebase-mcp:<tag>` and `latest` from `Dockerfile`.
 - **Local binary override**: the npm wrapper honors `CODEBASE_MCP_BINARY` for development or custom installs.
 
-To cut a release, update versions, push a semver tag such as `v1.4.1`, and ensure GitHub Releases, GHCR, and npm credentials are configured.
+To cut a release, update versions, push a semver tag such as `v1.4.1`, and ensure GitHub Releases and npm credentials are configured.
 
 ---
 
@@ -458,3 +437,4 @@ Built on [Tree-sitter](https://tree-sitter.github.io/tree-sitter/), [Tantivy](ht
 ## License
 
 Apache-2.0. See [LICENSE](./LICENSE).
+
