@@ -1,5 +1,6 @@
 use codebase_mcp::tools::{
-    self, fuzzy_find, project_map, read_file, read_snippets, read_symbol_body, text_search,
+    self, compare_directories, fuzzy_find, project_map, read_file, read_snippets, read_symbol_body,
+    text_search,
 };
 use serde_json::json;
 use std::fs;
@@ -509,5 +510,393 @@ async fn test_project_map_reports_output_child_truncation() {
             .get("truncated_directory_count")
             .and_then(|v| v.as_u64()),
         Some(1)
+    );
+}
+
+#[tokio::test]
+async fn test_compare_directories_reports_added_deleted_modified_and_ignored() {
+    let dir = tempdir().unwrap();
+    let left = dir.path().join("left");
+    let right = dir.path().join("right");
+    fs::create_dir_all(left.join("src")).unwrap();
+    fs::create_dir_all(right.join("src")).unwrap();
+    fs::create_dir_all(right.join("target")).unwrap();
+
+    fs::write(
+        left.join("src/common.rs"),
+        "fn shared() {\n    println!(\"old\");\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        right.join("src/common.rs"),
+        "fn shared() {\n    println!(\"new\");\n}\n",
+    )
+    .unwrap();
+    fs::write(left.join("src/removed.rs"), "fn removed() {}\n").unwrap();
+    fs::write(right.join("src/added.rs"), "fn added() {}\n").unwrap();
+    fs::write(right.join("target/generated.rs"), "ignored\n").unwrap();
+
+    let res = compare_directories::execute(&json!({
+        "left_path": left.to_str().unwrap(),
+        "right_path": right.to_str().unwrap()
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        res.pointer("/summary/added_files").and_then(|v| v.as_u64()),
+        Some(1)
+    );
+    assert_eq!(
+        res.pointer("/summary/deleted_files")
+            .and_then(|v| v.as_u64()),
+        Some(1)
+    );
+    assert_eq!(
+        res.pointer("/summary/modified_text_files")
+            .and_then(|v| v.as_u64()),
+        Some(1)
+    );
+
+    let added = res.get("added_files").and_then(|v| v.as_array()).unwrap();
+    assert!(
+        added
+            .iter()
+            .any(|value| value.as_str() == Some("src/added.rs"))
+    );
+    assert!(
+        !added
+            .iter()
+            .any(|value| value.as_str() == Some("target/generated.rs"))
+    );
+
+    let modified = res
+        .get("modified_files")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.first())
+        .unwrap();
+    assert_eq!(
+        modified.get("path").and_then(|v| v.as_str()),
+        Some("src/common.rs")
+    );
+    assert!(
+        modified
+            .get("unified_diff")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .contains("println!(\"new\")")
+    );
+}
+
+#[tokio::test]
+async fn test_compare_directories_is_exposed_and_dispatchable() {
+    let listed_tools = tools::list_tools();
+    assert!(listed_tools.iter().any(|tool| {
+        tool.get("name").and_then(|value| value.as_str()) == Some("compare_directories")
+    }));
+
+    let dir = tempdir().unwrap();
+    let left = dir.path().join("left");
+    let right = dir.path().join("right");
+    fs::create_dir_all(&left).unwrap();
+    fs::create_dir_all(&right).unwrap();
+
+    let result = tools::call_tool(json!({
+        "name": "compare_directories",
+        "arguments": {
+            "left_path": left.to_str().unwrap(),
+            "right_path": right.to_str().unwrap()
+        }
+    }))
+    .await
+    .unwrap();
+    assert!(result.get("content").is_some());
+}
+
+#[tokio::test]
+async fn test_compare_directories_summary_truncation_binary_large_and_rename() {
+    let dir = tempdir().unwrap();
+    let left = dir.path().join("left-rich");
+    let right = dir.path().join("right-rich");
+    fs::create_dir_all(left.join("src/auth")).unwrap();
+    fs::create_dir_all(right.join("src/auth")).unwrap();
+    fs::create_dir_all(left.join("docs")).unwrap();
+    fs::create_dir_all(right.join("docs")).unwrap();
+
+    fs::write(left.join("docs/old.md"), "same rename content\n").unwrap();
+    fs::write(right.join("docs/new.md"), "same rename content\n").unwrap();
+    fs::write(
+        left.join("src/auth/login.rs"),
+        "fn login() {\n    old();\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        right.join("src/auth/login.rs"),
+        "fn login() {\n    new();\n}\n",
+    )
+    .unwrap();
+    fs::write(left.join("src/blob.bin"), [0x01u8, 0x00, 0x02]).unwrap();
+    fs::write(right.join("src/blob.bin"), [0x01u8, 0x00, 0x03]).unwrap();
+    fs::write(left.join("src/big.txt"), "a".repeat(64)).unwrap();
+    fs::write(right.join("src/big.txt"), "b".repeat(64)).unwrap();
+
+    let res = compare_directories::execute(&json!({
+        "left_path": left.to_str().unwrap(),
+        "right_path": right.to_str().unwrap(),
+        "max_file_size": 32,
+        "max_diff_bytes": 12,
+        "summary_only": true
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        res.pointer("/summary/renamed_files")
+            .and_then(|v| v.as_u64()),
+        Some(1)
+    );
+    assert_eq!(
+        res.pointer("/summary/modified_binary_files")
+            .and_then(|v| v.as_u64()),
+        Some(1)
+    );
+    assert_eq!(
+        res.pointer("/summary/skipped_files")
+            .and_then(|v| v.as_u64()),
+        Some(1)
+    );
+    assert_eq!(
+        res.pointer("/summary/diff_bytes_returned")
+            .and_then(|v| v.as_u64()),
+        Some(0)
+    );
+
+    let modified = res
+        .get("modified_files")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.first())
+        .unwrap();
+    assert!(modified.get("unified_diff").is_none());
+    assert_eq!(
+        modified.get("risk_category").and_then(|v| v.as_str()),
+        Some("auth/security")
+    );
+    assert!(
+        res.get("top_changed_directories")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .any(|item| item.get("name").and_then(|v| v.as_str()) == Some("src"))
+    );
+    assert!(
+        res.get("extensions_summary")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .any(|item| item.get("name").and_then(|v| v.as_str()) == Some(".rs"))
+    );
+    assert!(
+        res.get("risk_hints")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .any(|item| item.get("category").and_then(|v| v.as_str()) == Some("auth/security"))
+    );
+}
+
+#[tokio::test]
+async fn test_compare_directories_markdown_output() {
+    let dir = tempdir().unwrap();
+    let left = dir.path().join("left-md");
+    let right = dir.path().join("right-md");
+    fs::create_dir_all(&left).unwrap();
+    fs::create_dir_all(&right).unwrap();
+    fs::write(right.join("added.rs"), "fn added() {}\n").unwrap();
+
+    let result = tools::call_tool(json!({
+        "name": "compare_directories",
+        "arguments": {
+            "left_path": left.to_str().unwrap(),
+            "right_path": right.to_str().unwrap(),
+            "output_format": "markdown"
+        }
+    }))
+    .await
+    .unwrap();
+
+    let text = result
+        .get("content")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("text"))
+        .and_then(|v| v.as_str())
+        .unwrap();
+    assert!(text.contains("# Directory Compare Report"));
+    assert!(text.contains("`added.rs`"));
+}
+
+#[tokio::test]
+async fn test_compare_directories_edge_options() {
+    let dir = tempdir().unwrap();
+    let left = dir.path().join("left-options");
+    let right = dir.path().join("right-options");
+    fs::create_dir_all(left.join("src")).unwrap();
+    fs::create_dir_all(right.join("src")).unwrap();
+    fs::create_dir_all(left.join("docs")).unwrap();
+    fs::create_dir_all(right.join("docs")).unwrap();
+
+    fs::write(left.join("docs/a.md"), "same\n").unwrap();
+    fs::write(right.join("docs/b.md"), "same\n").unwrap();
+    fs::write(left.join("src/main.rs"), "fn main() {\n    old();\n}\n").unwrap();
+    fs::write(right.join("src/main.rs"), "fn main() {\n    new();\n}\n").unwrap();
+    fs::write(right.join("src/ignored.rs"), "fn ignored() {}\n").unwrap();
+
+    let no_rename = compare_directories::execute(&json!({
+        "left_path": left.to_str().unwrap(),
+        "right_path": right.to_str().unwrap(),
+        "detect_renames": false,
+        "include_content_diff": false,
+        "excludes": ["src/ignored.rs"]
+    }))
+    .await
+    .unwrap();
+    assert_eq!(
+        no_rename
+            .pointer("/summary/renamed_files")
+            .and_then(|v| v.as_u64()),
+        Some(0)
+    );
+    assert_eq!(
+        no_rename
+            .pointer("/summary/added_files")
+            .and_then(|v| v.as_u64()),
+        Some(1)
+    );
+    assert_eq!(
+        no_rename
+            .pointer("/summary/deleted_files")
+            .and_then(|v| v.as_u64()),
+        Some(1)
+    );
+    let modified = no_rename
+        .get("modified_files")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.first())
+        .unwrap();
+    assert!(modified.get("unified_diff").is_none());
+    assert_eq!(
+        modified
+            .get("affected_symbols")
+            .and_then(|v| v.as_array())
+            .and_then(|items| items.first())
+            .and_then(|v| v.as_str()),
+        Some("main")
+    );
+
+    let include_only_docs = compare_directories::execute(&json!({
+        "left_path": left.to_str().unwrap(),
+        "right_path": right.to_str().unwrap(),
+        "includes": ["docs/**"]
+    }))
+    .await
+    .unwrap();
+    assert_eq!(
+        include_only_docs
+            .pointer("/summary/renamed_files")
+            .and_then(|v| v.as_u64()),
+        Some(1)
+    );
+    assert_eq!(
+        include_only_docs
+            .pointer("/summary/modified_text_files")
+            .and_then(|v| v.as_u64()),
+        Some(0)
+    );
+
+    let invalid = compare_directories::execute(&json!({
+        "left_path": left.to_str().unwrap(),
+        "right_path": right.to_str().unwrap(),
+        "output_format": "html"
+    }))
+    .await;
+    assert!(
+        invalid
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported output_format")
+    );
+}
+
+#[tokio::test]
+async fn test_compare_directories_truncates_diff_and_detects_fuzzy_rename() {
+    let dir = tempdir().unwrap();
+    let left = dir.path().join("left-fuzzy");
+    let right = dir.path().join("right-fuzzy");
+    fs::create_dir_all(left.join("src")).unwrap();
+    fs::create_dir_all(right.join("src")).unwrap();
+
+    fs::write(
+        left.join("src/old_name.rs"),
+        "fn same() {\n    alpha();\n    beta();\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        right.join("src/new_name.rs"),
+        "fn same() {\n    alpha();\n    gamma();\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        left.join("src/changed.rs"),
+        "fn changed() {\n    old_line_one();\n    old_line_two();\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        right.join("src/changed.rs"),
+        "fn changed() {\n    new_line_one();\n    new_line_two();\n}\n",
+    )
+    .unwrap();
+
+    let res = compare_directories::execute(&json!({
+        "left_path": left.to_str().unwrap(),
+        "right_path": right.to_str().unwrap(),
+        "rename_similarity_threshold": 0.5,
+        "max_diff_bytes": 24
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        res.pointer("/summary/renamed_files")
+            .and_then(|v| v.as_u64()),
+        Some(1)
+    );
+    let rename = res
+        .get("renamed_files")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.first())
+        .unwrap();
+    assert_eq!(
+        rename
+            .get("modified_after_rename")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+
+    let modified = res
+        .get("modified_files")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.first())
+        .unwrap();
+    assert_eq!(
+        modified.get("diff_truncated").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert!(
+        modified
+            .get("affected_symbols")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .any(|value| value.as_str() == Some("changed"))
     );
 }

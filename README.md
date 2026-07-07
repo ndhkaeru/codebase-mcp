@@ -101,7 +101,7 @@ The result: fewer tokens, faster turns, and answers grounded in the real reposit
 
 ## Tools
 
-25 tools, grouped by purpose. Each returns output in the standard MCP `content` array shape.
+26 tools, grouped by purpose. Each returns output in the standard MCP `content` array shape.
 
 ### Files and Edits
 
@@ -139,6 +139,34 @@ The result: fewer tokens, faster turns, and answers grounded in the real reposit
 | `list_exports` | List exports (Rust, JS/TS, Swift, Objective-C). |
 | `get_call_graph` | List outbound calls made from a function or symbol. |
 | `compare_symbols` | Compare two resolved symbols and return metadata plus a unified diff. |
+| `compare_directories` | Compare two source directories and return AI-friendly added/deleted/modified/renamed summaries with optional bounded diffs. |
+
+Example `compare_directories` input:
+
+```json
+{
+  "left_path": "./old-version",
+  "right_path": "./new-version",
+  "summary_only": false,
+  "detect_renames": true,
+  "rename_similarity_threshold": 0.85,
+  "max_diff_bytes": 262144,
+  "excludes": ["**/*.lock"]
+}
+```
+
+The response includes stable JSON fields such as `summary`, `added_files`, `deleted_files`, `renamed_files`, `modified_files`, `top_changed_directories`, `extensions_summary`, `changed_files_by_directory`, `risk_hints`, `binary_files`, `skipped_files`, and `warnings`. Modified text entries include best-effort `affected_symbols`. Use `summary_only: true` for large trees, or `output_format: "markdown"` for a compact human-readable report.
+
+Small response shape example:
+
+```json
+{
+  "summary": { "added_files": 1, "deleted_files": 0, "renamed_files": 1, "modified_text_files": 1 },
+  "top_changed_directories": [{ "name": "src", "count": 2 }],
+  "renamed_files": [{ "old_path": "src/old.rs", "new_path": "src/new.rs", "similarity": 0.92 }],
+  "modified_files": [{ "path": "src/lib.rs", "affected_symbols": ["run"] }]
+}
+```
 
 ### Data and Diagnostics
 

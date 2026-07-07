@@ -6,6 +6,7 @@ mod diff_support;
 mod path_filters;
 
 pub mod batch_tool_call;
+pub mod compare_directories;
 pub mod compare_symbols;
 pub mod content_index_status;
 pub mod convert_file_format;
@@ -49,6 +50,7 @@ pub fn list_tools() -> Vec<Value> {
         read_symbol_body::schema(),
         list_imports::schema(),
         list_exports::schema(),
+        compare_directories::schema(),
         compare_symbols::schema(),
         fuzzy_find::schema(),
         project_map::schema(),
@@ -85,6 +87,7 @@ pub async fn call_tool(params: Value) -> Result<Value> {
         "read_symbol_body" => read_symbol_body::execute(&arguments).await,
         "list_imports" => list_imports::execute(&arguments).await,
         "list_exports" => list_exports::execute(&arguments).await,
+        "compare_directories" => compare_directories::execute(&arguments).await,
         "compare_symbols" => compare_symbols::execute(&arguments).await,
         "fuzzy_find" => fuzzy_find::execute(&arguments).await,
         "project_map" => project_map::execute(&arguments).await,
