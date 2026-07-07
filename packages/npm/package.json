@@ -1,7 +1,7 @@
 {
   "name": "@ndhkaeru/codebase-mcp",
   "version": "1.4.1",
-  "description": "High-performance MCP server for filesystem and code intelligence workflows",
+  "description": "npx-friendly distribution of codebase-mcp, a local-first MCP server for code search, code intelligence, and safe edits",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
