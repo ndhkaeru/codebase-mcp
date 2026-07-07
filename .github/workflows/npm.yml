@@ -31,13 +31,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for i in {1..30}; do
-            if gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets | length' | grep -q '^[1-9]'; then
+          query='(["codebase-mcp-aarch64-apple-darwin.tar.xz", "codebase-mcp-aarch64-pc-windows-msvc.zip", "codebase-mcp-aarch64-unknown-linux-gnu.tar.xz", "codebase-mcp-x86_64-apple-darwin.tar.xz", "codebase-mcp-x86_64-pc-windows-msvc.zip", "codebase-mcp-x86_64-unknown-linux-gnu.tar.xz"] as $required | [.assets[].name] as $names | all($required[]; . as $asset | $names | index($asset)))'
+          for i in {1..45}; do
+            if gh release view "${GITHUB_REF_NAME}" --json assets --jq "${query}" | grep -q true; then
               exit 0
             fi
             sleep 20
           done
-          echo "Release assets were not available in time" >&2
+          echo "Required GitHub Release binary assets were not available in time" >&2
           exit 1
 
       - name: Prepare native npm assets
@@ -56,3 +57,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish
+
+
+
+
