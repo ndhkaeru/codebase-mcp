@@ -4,7 +4,8 @@ use serde_json::{Value, json};
 pub fn schema() -> Value {
     json!({
         "name": "count_file_lines",
-        "description": "Count lines in a text file with basic encoding and binary detection.",
+        "title": "Count file lines",
+        "description": "Count lines in one file with encoding and binary detection. Use before choosing read_file_range/snippet bounds or estimating file size without loading content.",
         "inputSchema": {
             "type": "object",
             "properties": {

@@ -10,7 +10,8 @@ use crate::tools::ast_support::{
 pub fn schema() -> Value {
     json!({
         "name": "list_imports",
-        "description": "List imports for Rust, JavaScript/TypeScript, Swift, and Objective-C files.",
+        "title": "List imports",
+        "description": "List imports from one Rust, JavaScript/TypeScript, Swift, or Objective-C file. Use to understand dependencies before deeper reads or edits.",
         "inputSchema": {
             "type": "object",
             "properties": {

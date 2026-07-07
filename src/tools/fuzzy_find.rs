@@ -18,7 +18,8 @@ const MAX_FUZZY_RESULTS: usize = 500;
 pub fn schema() -> Value {
     json!({
         "name": "fuzzy_find",
-        "description": "Perform fast fuzzy path and file-name search using the metadata/path index when available. Use this before text_search to discover precise directories/files in large repositories; prefer concrete basename/path tokens, target_type/extensions filters, and scoped paths over broad natural-language patterns.",
+        "title": "Fuzzy find paths",
+        "description": "Perform fast fuzzy path and file-name search using the metadata/path index when available. Use before text_search to discover precise directories/files in large repositories; prefer concrete basename/path tokens and scoped paths over broad prose.",
         "inputSchema": {
             "type": "object",
             "properties": {

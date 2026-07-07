@@ -57,7 +57,8 @@ fn line_ending_metadata(content: &str) -> Option<String> {
 pub fn schema() -> Value {
     json!({
         "name": "convert_file_format",
-        "description": "Rewrite a file with normalized encoding and line endings.",
+        "title": "Convert file format",
+        "description": "Rewrite one text file with normalized encoding and line endings. Use for cleanup before edits or tests; do not use for binary files.",
         "inputSchema": {
             "type": "object",
             "properties": {

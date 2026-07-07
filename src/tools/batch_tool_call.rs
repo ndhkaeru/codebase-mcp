@@ -37,7 +37,8 @@ fn flatten_tool_result(result: Value) -> Result<Value> {
 pub fn schema() -> Value {
     json!({
         "name": "batch_tool_call",
-        "description": "Run multiple tools sequentially in one request and flatten the combined results. Accepts at most 20 calls and rejects recursive batch_tool_call.",
+        "title": "Batch tool calls",
+        "description": "Run a short sequence of codebase-mcp tools in one request when later calls depend on earlier results. Use to reduce round trips for read-only reconnaissance; maximum 20 calls and recursive batch_tool_call is rejected.",
         "inputSchema": {
             "type": "object",
             "properties": {

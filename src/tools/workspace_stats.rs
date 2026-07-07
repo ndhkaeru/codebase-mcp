@@ -20,7 +20,8 @@ const MAX_LINE_COUNT_BYTES_LIMIT: u64 = 20 * 1024 * 1024;
 pub fn schema() -> Value {
     json!({
         "name": "workspace_stats",
-        "description": "Summarize file, line, and language counts for a workspace path. Use this to estimate repository size and decide whether text_search needs a narrow path/includes scope before content search.",
+        "title": "Workspace stats",
+        "description": "Summarize file, line, and language counts for a directory. Use to estimate repository size and decide whether text_search needs narrower paths/includes before content search.",
         "inputSchema": {
             "type": "object",
             "properties": {

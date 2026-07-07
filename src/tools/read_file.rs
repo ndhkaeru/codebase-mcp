@@ -9,7 +9,8 @@ use crate::common::insert_object_field;
 pub fn schema() -> Value {
     json!({
         "name": "read_file_range",
-        "description": "Read a file or line range with encoding detection and truncation metadata.",
+        "title": "Read file range",
+        "description": "Read one focused file range with encoding detection and truncation metadata. Use after search/path discovery; prefer line ranges over whole-file reads.",
         "inputSchema": {
             "type": "object",
             "properties": {

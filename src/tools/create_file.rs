@@ -32,7 +32,8 @@ fn error_reason(error_code: &str) -> &'static str {
 pub fn schema() -> Value {
     json!({
         "name": "create_file",
-        "description": "Create or overwrite a file with optional parent creation, encoding, and line endings.",
+        "title": "Create file",
+        "description": "Create or overwrite one file with optional parent creation, encoding, and line endings. Use for new focused files; prefer edit_file for existing targeted changes.",
         "inputSchema": {
             "type": "object",
             "properties": {

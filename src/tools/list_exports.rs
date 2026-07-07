@@ -10,7 +10,8 @@ use crate::tools::ast_support::{
 pub fn schema() -> Value {
     json!({
         "name": "list_exports",
-        "description": "List exports for Rust, JavaScript/TypeScript, Swift, and Objective-C files.",
+        "title": "List exports",
+        "description": "List public exports from one Rust, JavaScript/TypeScript, Swift, or Objective-C file. Use to understand module API surface quickly.",
         "inputSchema": {
             "type": "object",
             "properties": {

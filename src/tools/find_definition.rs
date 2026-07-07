@@ -13,7 +13,8 @@ const MAX_RESULTS: usize = 20;
 pub fn schema() -> Value {
     json!({
         "name": "find_definition",
-        "description": "Find likely symbol definitions across the project.",
+        "title": "Find definition",
+        "description": "Find likely definitions for a symbol across code files. Use when you know a function/type name and need candidate files before reading symbol bodies.",
         "inputSchema": {
             "type": "object",
             "properties": {

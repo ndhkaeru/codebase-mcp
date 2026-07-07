@@ -46,7 +46,8 @@ fn detect_language(ext: &str) -> &'static str {
 pub fn schema() -> Value {
     json!({
         "name": "file_summary",
-        "description": "Return quick file metadata, binary detection, and a short preview.",
+        "title": "Summarize file",
+        "description": "Return quick metadata, binary detection, and a short preview for one file. Use as a cheap preflight before reading large or unfamiliar files.",
         "inputSchema": {
             "type": "object",
             "properties": {

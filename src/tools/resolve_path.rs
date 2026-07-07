@@ -4,7 +4,8 @@ use serde_json::{Value, json};
 pub fn schema() -> Value {
     json!({
         "name": "resolve_path",
-        "description": "Normalize a path and return preflight accessibility metadata.",
+        "title": "Resolve path",
+        "description": "Normalize one path and return preflight accessibility metadata. Use when a user-supplied or relative path may be ambiguous before read/write operations.",
         "inputSchema": {
             "type": "object",
             "properties": {

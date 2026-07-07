@@ -25,7 +25,8 @@ fn error_reason(error_code: &str) -> &'static str {
 pub fn schema() -> Value {
     json!({
         "name": "delete_file",
-        "description": "Delete a file with structured success and error metadata.",
+        "title": "Delete file",
+        "description": "Delete one file and return structured success/error metadata. Use only for explicit user-requested cleanup; directories are rejected.",
         "inputSchema": {
             "type": "object",
             "properties": {

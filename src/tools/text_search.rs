@@ -103,7 +103,8 @@ struct FallbackPlan {
 pub fn schema() -> Value {
     json!({
         "name": "text_search",
-        "description": "Search file contents with exact literal/regex verification. For large repos, use narrow paths first (for example src/module), prefer literal queries to use Tantivy candidate shortlisting, and check search_strategy/fallback_reason/warming_zones in the response. Root-wide searches may be planned/refused unless allow_expensive_fallback=true.",
+        "title": "Search text",
+        "description": "Search file contents with exact literal or regex verification. For large repos, scope paths/includes first, prefer literal queries for Tantivy shortlisting, and inspect search_strategy/fallback_reason/warming_zones.",
         "inputSchema": {
             "type": "object",
             "properties": {

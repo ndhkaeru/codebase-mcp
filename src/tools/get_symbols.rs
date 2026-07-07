@@ -8,7 +8,8 @@ use crate::tools::ast_support::{
 pub fn schema() -> Value {
     json!({
         "name": "get_symbols",
-        "description": "Extract Tree-sitter AST symbols from Rust, JavaScript/TypeScript, Python, C/C++, Go, Java, C#, PHP, Ruby, Swift, and Objective-C source files.",
+        "title": "List symbols",
+        "description": "Extract top-level symbols from one source file using Tree-sitter. Use after locating a file to choose exact symbols for read_symbol_body or call graph inspection.",
         "inputSchema": {
             "type": "object",
             "properties": {

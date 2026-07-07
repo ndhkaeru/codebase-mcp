@@ -8,7 +8,8 @@ use crate::indexer::content_status_for_paths;
 pub fn schema() -> Value {
     json!({
         "name": "content_index_status",
-        "description": "Report Tantivy content-index zone status for specific paths. Use this before repeated text_search calls in large repos to see whether scoped paths are ready, warming, not indexed, or outside the indexed workspace.",
+        "title": "Check content index status",
+        "description": "Report Tantivy content-index zone status for specific files or directories. Use before repeated text_search calls in large repositories to see whether scoped paths are ready, warming, not indexed, or outside the indexed workspace.",
         "inputSchema": {
             "type": "object",
             "properties": {

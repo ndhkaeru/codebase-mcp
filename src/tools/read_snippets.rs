@@ -7,7 +7,8 @@ use crate::tools::read_file;
 pub fn schema() -> Value {
     json!({
         "name": "read_snippets",
-        "description": "Read multiple file ranges in one request.",
+        "title": "Read snippets",
+        "description": "Read multiple focused file ranges in one request. Use to gather evidence from several files or call sites without loading whole files.",
         "inputSchema": {
             "type": "object",
             "properties": {

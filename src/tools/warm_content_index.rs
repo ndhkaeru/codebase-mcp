@@ -13,7 +13,8 @@ const MAX_WAIT_MS: u64 = 30_000;
 pub fn schema() -> Value {
     json!({
         "name": "warm_content_index",
-        "description": "Request Tantivy content-index warming for specific scoped paths. Use before repeated literal text_search in large repositories; pass directories like chrome/browser/net, then inspect statuses/warming_zones and retry search when ready.",
+        "title": "Warm content index",
+        "description": "Request Tantivy content-index warming for specific scoped paths. Use before repeated literal text_search in large repositories; pass subsystem directories, then inspect statuses/warming_zones and retry when ready.",
         "inputSchema": {
             "type": "object",
             "properties": {

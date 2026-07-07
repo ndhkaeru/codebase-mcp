@@ -26,7 +26,8 @@ fn error_reason(error_code: &str) -> &'static str {
 pub fn schema() -> Value {
     json!({
         "name": "create_directory",
-        "description": "Create a directory with optional parent creation and structured results.",
+        "title": "Create directory",
+        "description": "Create one directory with optional parent creation and structured success/error metadata. Use before creating files in a new path.",
         "inputSchema": {
             "type": "object",
             "properties": {

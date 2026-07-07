@@ -11,7 +11,8 @@ fn normalize_archive_entry_path(raw: &str) -> String {
 pub fn schema() -> Value {
     json!({
         "name": "peek_archive",
-        "description": "List archive entries or read a file inside an archive.",
+        "title": "Peek archive",
+        "description": "List archive entries or read one file inside an archive without extracting it. Use for source bundles or release artifacts; prefer inner_path for targeted reads.",
         "inputSchema": {
             "type": "object",
             "properties": {

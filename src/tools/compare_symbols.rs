@@ -8,7 +8,8 @@ use crate::tools::read_symbol_body;
 pub fn schema() -> Value {
     json!({
         "name": "compare_symbols",
-        "description": "Compare two resolved symbols and return metadata plus a unified diff.",
+        "title": "Compare symbols",
+        "description": "Resolve one symbol on each side and return metadata plus a unified diff. Use after compare_directories or text_search when you need to review how a function/type changed across files or versions.",
         "inputSchema": {
             "type": "object",
             "properties": {

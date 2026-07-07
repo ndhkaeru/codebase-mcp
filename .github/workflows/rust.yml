@@ -109,3 +109,43 @@ jobs:
 
       - name: Check spelling
         uses: crate-ci/typos@master
+
+  npm-metadata:
+    name: NPM and MCP Metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Check npm launcher syntax
+        run: |
+          node --check packages/npm/bin/codebase-mcp.js
+          node --check packages/npm/scripts/prepare-npm-assets.js
+
+      - name: Validate MCP registry metadata
+        run: |
+          node - <<'NODE'
+          const pkg = require('./packages/npm/package.json');
+          const server = require('./server.json');
+          const mismatches = [];
+          if (server.name !== pkg.mcpName) mismatches.push(`server.name=${server.name} != package.mcpName=${pkg.mcpName}`);
+          if (server.version !== pkg.version) mismatches.push(`server.version=${server.version} != package.version=${pkg.version}`);
+          for (const packageEntry of server.packages || []) {
+            if (packageEntry.identifier === pkg.name && packageEntry.version !== pkg.version) {
+              mismatches.push(`server package ${packageEntry.identifier} version=${packageEntry.version} != package.version=${pkg.version}`);
+            }
+          }
+          if (mismatches.length) {
+            console.error('server.json is out of sync with packages/npm/package.json:');
+            for (const mismatch of mismatches) console.error(`  ${mismatch}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Check npm package shape
+        working-directory: packages/npm
+        run: npm pack --dry-run
+

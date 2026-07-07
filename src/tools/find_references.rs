@@ -13,7 +13,8 @@ const MAX_RESULTS: usize = 200;
 pub fn schema() -> Value {
     json!({
         "name": "find_references",
-        "description": "Find symbol references across the project.",
+        "title": "Find references",
+        "description": "Find likely references to a symbol across code files using token-aware matching. Use after locating a definition to understand call sites or impact.",
         "inputSchema": {
             "type": "object",
             "properties": {

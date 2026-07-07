@@ -40,7 +40,8 @@ fn error_reason(error_code: &str) -> &'static str {
 pub fn schema() -> Value {
     json!({
         "name": "edit_file",
-        "description": "Edit a file using replace, append, prepend, or find-replace modes.",
+        "title": "Edit file",
+        "description": "Edit one text file using replace, append, prepend, or exact find-replace. Prefer find_replace with expected_replacements for surgical edits; use replace only when rewriting the whole file is intended.",
         "inputSchema": {
             "type": "object",
             "properties": {

@@ -12,7 +12,8 @@ lazy_static::lazy_static! {
 pub fn schema() -> Value {
     json!({
         "name": "server_health",
-        "description": "Check server uptime and indexing health. Use this before broad searches in large repos: path_index powers fuzzy/path tools, content_index powers text_search Tantivy shortlisting and may only cover listed zones.",
+        "title": "Check server health",
+        "description": "Check server uptime, workspace roots, and indexing health. Use before broad searches in large repos: path_index powers fuzzy/path tools, content_index powers text_search shortlisting and may only cover listed zones.",
         "inputSchema": {
             "type": "object",
             "properties": {}

@@ -15,7 +15,8 @@ const MAX_CHILDREN_PER_DIR_LIMIT: usize = 5_000;
 pub fn schema() -> Value {
     json!({
         "name": "project_map",
-        "description": "Build a tree view of a project with optional size metadata. Use this to choose a precise text_search scope; for very large repositories, scope path to a module and keep max_depth/max_children_per_dir low to avoid oversized responses.",
+        "title": "Map project tree",
+        "description": "Build a bounded tree view of a directory with optional size metadata. Use first for repository orientation and to choose precise text_search scopes; keep depth/children low for large repos.",
         "inputSchema": {
             "type": "object",
             "properties": {
