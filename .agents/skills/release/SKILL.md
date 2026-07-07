@@ -66,10 +66,22 @@ After npm succeeds, manually dispatch `Publish npm package` for the same tag wit
 
 ## 7. Release notes
 
+`cargo-dist` creates a useful binary/install table, but its default release body is too generic for this project. Prepare human-facing notes before or immediately after the tag release, then update the GitHub Release with `gh release edit v<version> --notes-file release-notes.md`.
+
 Write short GitHub release notes focused on user-visible changes:
 
 - `## What's New` for new tools or workflow improvements
 - `## Improvements` for behavior, performance, packaging, or docs
 - `## Fixes` for bug fixes and security/dependency updates
 
+Recommended structure:
+
+- `# codebase-mcp vX.Y.Z`
+- short one-sentence product summary
+- `## What's New` with npm/npx usage first
+- important tools or behavior changes
+- native installer/download section
+- checksum/npm verification links
+
 Do not mention Docker unless it is explicitly restored.
+
