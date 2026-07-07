@@ -17,6 +17,7 @@ use tracing::{Level, debug, error, info, warn};
 use version::SERVER_VERSION;
 
 const SERVER_NAME: &str = "codebase-mcp";
+const SERVER_INSTRUCTIONS: &str = "Use codebase-mcp when you need local repository context without loading whole files or trees. Start with project_map, workspace_stats, fuzzy_find, or compare_directories to understand scope; use server_health to check path/content index status in large repos; warm scoped content zones before repeated literal searches; then use text_search with the narrowest paths/includes possible and read_file_range, read_snippets, or read_symbol_body for focused evidence. Prefer symbol tools for definitions, references, imports/exports, and call graphs before editing. Prefer literal text_search so the content index can shortlist files; inspect search_strategy, fallback_reason, content_index_used, content_index_partial, content_index_zones, and warming_zones. Avoid workspace-root searches in large repos unless allow_expensive_fallback=true is intentional. For edits, use create_file/create_directory/edit_file/delete_file with exact paths and verify with focused reads or tests. Paths should be absolute or workspace-relative to the active client workspace.";
 /// Default timeout for one tool call (seconds).
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 60;
 /// Maximum timeout a client can request for one tool call (seconds).
@@ -95,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
                                 "capabilities": {
                                     "tools": {}
                                 },
-                                "instructions": "Use codebase-mcp for local codebase exploration, precise file reads, scoped search, AST-backed code navigation, and safe filesystem edits. Recommended workflow: inspect structure with project_map/workspace_stats/fuzzy_find, check server_health for path_index/content_index coverage in large repos, optionally call content_index_status/warm_content_index for scoped directories you will search repeatedly, search contents with text_search using the narrowest paths/includes possible, then read focused ranges with read_file_range/read_snippets and use symbol tools for definitions/references/call graphs before editing. For text_search, prefer literal mode when possible so Tantivy can shortlist candidates before exact grep verification; inspect search_strategy, fallback_reason, content_index_used, content_index_partial, content_index_zones, and warming_zones. If a content zone is warming, retry the scoped search after warming. Avoid workspace-root text_search in large repos unless allow_expensive_fallback=true is intentional. Use absolute or workspace-relative paths from the active client workspace."
+                                "instructions": SERVER_INSTRUCTIONS
                             }),
                         )
                     }

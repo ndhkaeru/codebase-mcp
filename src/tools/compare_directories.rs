@@ -62,22 +62,23 @@ struct TextChange {
 pub fn schema() -> Value {
     json!({
         "name": "compare_directories",
-        "description": "Compare two source directories and return AI-friendly added/deleted/modified/renamed file summaries with optional bounded unified diffs.",
+        "title": "Compare source directories",
+        "description": "Compare two source directory trees to quickly identify user-visible code changes. Use this before detailed reads when reviewing generated projects, migrations, releases, or copied workspaces; it reports added/deleted/modified/renamed files, bounded diffs, hotspots, and risk hints while skipping common generated/vendor directories by default.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "left_path": { "type": "string", "description": "Left/base directory path. Relative paths resolve against the active workspace." },
-                "right_path": { "type": "string", "description": "Right/changed directory path. Relative paths resolve against the active workspace." },
-                "includes": { "type": "array", "items": { "type": "string" }, "description": "Optional glob include filters." },
-                "excludes": { "type": "array", "items": { "type": "string" }, "description": "Optional glob exclude filters. Default generated/vendor directories are always excluded." },
-                "max_file_size": { "type": "integer", "description": "Maximum file size to diff/read in bytes. Defaults to 2 MiB." },
-                "max_diff_bytes": { "type": "integer", "description": "Maximum total unified diff bytes returned. Defaults to 256 KiB." },
-                "max_files": { "type": "integer", "description": "Maximum discovered files per side before aborting. Defaults to 20000." },
-                "include_content_diff": { "type": "boolean", "description": "Include bounded unified diffs for modified text files. Defaults to true." },
-                "summary_only": { "type": "boolean", "description": "Return counts, grouped summaries, and changed file lists without per-file diff payloads. Defaults to false." },
+                "left_path": { "type": "string", "description": "Base/source directory. Relative paths resolve against the active workspace." },
+                "right_path": { "type": "string", "description": "Changed/target directory to compare against left_path. Relative paths resolve against the active workspace." },
+                "includes": { "type": "array", "items": { "type": "string" }, "description": "Glob include filters for focused reviews, e.g. [\"src/**\", \"**/*.rs\"]. Omit to scan all supported files." },
+                "excludes": { "type": "array", "items": { "type": "string" }, "description": "Extra glob excludes. Common generated/vendor directories such as .git, node_modules, target, build, dist, and coverage are always excluded." },
+                "max_file_size": { "type": "integer", "description": "Maximum file size to read or diff in bytes. Larger files are summarized as skipped. Defaults to 2 MiB." },
+                "max_diff_bytes": { "type": "integer", "description": "Maximum total unified diff bytes returned across all files. Lower this for first-pass reviews. Defaults to 256 KiB." },
+                "max_files": { "type": "integer", "description": "Maximum discovered files per side before aborting to protect the agent from huge trees. Defaults to 20000." },
+                "include_content_diff": { "type": "boolean", "description": "Include bounded unified diffs for modified text files. Set false for a faster inventory-only pass. Defaults to true." },
+                "summary_only": { "type": "boolean", "description": "Return counts, grouped summaries, and changed file lists without per-file diff payloads. Good first pass for large changes. Defaults to false." },
                 "detect_renames": { "type": "boolean", "description": "Detect exact and similar-content renames among added/deleted files. Defaults to true." },
                 "rename_similarity_threshold": { "type": "number", "description": "Line-similarity threshold for fuzzy rename detection, from 0.0 to 1.0. Defaults to 0.85." },
-                "output_format": { "type": "string", "enum": ["json", "markdown"], "description": "Return structured JSON or a compact Markdown report. Defaults to json." }
+                "output_format": { "type": "string", "enum": ["json", "markdown"], "description": "Return structured JSON for tool chaining or compact Markdown for direct human review. Defaults to json." }
             },
             "required": ["left_path", "right_path"]
         }

@@ -1,7 +1,7 @@
 {
   "name": "@ndhkaeru/codebase-mcp",
   "version": "1.4.1",
-  "description": "npx-friendly distribution of codebase-mcp, a local-first MCP server for code search, code intelligence, and safe edits",
+  "description": "Local-first MCP server for code search, code intelligence, repository comparison, and safe file edits",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -30,5 +30,6 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "mcpName": "io.github.ndhkaeru/codebase-mcp"
 }
