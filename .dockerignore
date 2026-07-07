@@ -1,0 +1,5 @@
+target/
+.git/
+.github/
+*.log
+packages/npm/native/

@@ -1,0 +1,58 @@
+name: NPM
+
+on:
+  push:
+    tags:
+      - '**[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    env:
+      HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Skip notice
+        if: env.HAS_NPM_TOKEN != 'true'
+        run: echo "NPM_TOKEN is not configured; skipping npm publish."
+
+      - name: Wait for GitHub Release assets
+        if: env.HAS_NPM_TOKEN == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for i in {1..30}; do
+            if gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets | length' | grep -q '^[1-9]'; then
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "Release assets were not available in time" >&2
+          exit 1
+
+      - name: Prepare native npm assets
+        if: env.HAS_NPM_TOKEN == 'true'
+        working-directory: packages/npm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: npm run prepare:native
+
+      - name: Publish npm package
+        if: env.HAS_NPM_TOKEN == 'true'
+        working-directory: packages/npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish

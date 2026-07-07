@@ -1,0 +1,34 @@
+{
+  "name": "codebase-mcp",
+  "version": "1.4.0",
+  "description": "High-performance MCP server for filesystem and code intelligence workflows",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ndhkaeru/codebase-mcp.git"
+  },
+  "homepage": "https://github.com/ndhkaeru/codebase-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/ndhkaeru/codebase-mcp/issues"
+  },
+  "type": "commonjs",
+  "bin": {
+    "codebase-mcp": "bin/codebase-mcp.js"
+  },
+  "files": [
+    "bin/",
+    "native/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepare:native": "node scripts/prepare-npm-assets.js",
+    "smoke": "node bin/codebase-mcp.js --version"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

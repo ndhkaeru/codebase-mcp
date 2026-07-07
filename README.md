@@ -7,7 +7,7 @@
 
 > **Let coding agents explore, search, and safely edit large repositories without loading whole files or directory trees into context.**
 
-`codebase-mcp` is a high-performance, local-first [Model Context Protocol](https://modelcontextprotocol.io) server written in Rust. It runs over `stdio` and gives an agent 25 precise tools for targeted reads, scoped search, Tree-sitter code intelligence, and structured edits, so the model spends its context window on answers, not on raw file dumps.
+`codebase-mcp` is a high-performance, local-first [Model Context Protocol](https://modelcontextprotocol.io) server written in Rust. It runs over `stdio` and gives an agent 26 precise tools for targeted reads, scoped search, Tree-sitter code intelligence, and structured edits, so the model spends its context window on answers, not on raw file dumps.
 
 Everything runs on your machine. There is no external indexing service, no network calls, and no telemetry.
 
@@ -26,7 +26,19 @@ Everything runs on your machine. There is no external indexing service, no netwo
 
 ## Quick Start
 
-### 1. Get the binary
+### 1. Get the server
+
+**Run with npx:**
+
+```bash
+npx -y codebase-mcp@latest
+```
+
+**Run with Docker:**
+
+```bash
+docker run --rm -i -v "$PWD:/workspace" ghcr.io/ndhkaeru/codebase-mcp:latest
+```
 
 **Install with one command (Linux/macOS):**
 
@@ -266,7 +278,37 @@ Batch related calls in one MCP round trip:
 
 ## Client Configuration
 
-Use the release binary as a `stdio` MCP server. On Windows, point `command` to the `.exe` file.
+Use the release binary, npm wrapper, or Docker image as a `stdio` MCP server. On Windows binary installs, point `command` to the `.exe` file.
+
+<details>
+<summary><strong>npx package</strong></summary>
+
+```json
+{
+  "mcpServers": {
+    "codebase-mcp": {
+      "command": "npx",
+      "args": ["-y", "codebase-mcp@latest"]
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><strong>Docker image</strong></summary>
+
+```json
+{
+  "mcpServers": {
+    "codebase-mcp": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "-v", "${workspaceFolder}:/workspace", "ghcr.io/ndhkaeru/codebase-mcp:latest"]
+    }
+  }
+}
+```
+</details>
 
 <details>
 <summary><strong>Claude Desktop</strong></summary>
@@ -370,6 +412,18 @@ LMDB stores path metadata. Tantivy is used as an optional sidecar for warmed con
 
 ---
 
+## Shipping
+
+Release tags are built by `cargo-dist` and published to GitHub Releases. Additional product channels mirror the Playwright MCP style:
+
+- **npm/npx**: `packages/npm` provides the `codebase-mcp` bin wrapper. On tag builds, `.github/workflows/npm.yml` prepares platform binaries from GitHub Release artifacts and publishes when `NPM_TOKEN` is configured.
+- **Docker/GHCR**: `.github/workflows/docker.yml` publishes `ghcr.io/ndhkaeru/codebase-mcp:<tag>` and `latest` from `Dockerfile`.
+- **Local binary override**: the npm wrapper honors `CODEBASE_MCP_BINARY` for development or custom installs.
+
+To cut a release, update versions, push a semver tag such as `v1.4.1`, and ensure GitHub Releases, GHCR, and npm credentials are configured.
+
+---
+
 ## Development
 
 Format, lint, and test:
@@ -394,18 +448,6 @@ src/
   tools/               MCP tool implementations and schemas
 tests/                 integration and behavior tests
 ```
-
----
-
-## Project Status
-
-- **Package:** `codebase-mcp`
-- **Version:** `1.3.1`
-- **Runtime:** Rust + Tokio
-- **Transport:** MCP `stdio`
-- **MCP protocol version:** `2024-11-05`
-- **Tool count:** 25
-- **License:** Apache-2.0
 
 ---
 
