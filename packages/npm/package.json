@@ -1,5 +1,5 @@
 {
-  "name": "codebase-mcp",
+  "name": "@ndhkaeru/codebase-mcp",
   "version": "1.4.0",
   "description": "High-performance MCP server for filesystem and code intelligence workflows",
   "license": "Apache-2.0",

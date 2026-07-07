@@ -3,7 +3,7 @@
 Run the `codebase-mcp` stdio MCP server through npm/npx:
 
 ```bash
-npx -y codebase-mcp@latest
+npx -y @ndhkaeru/codebase-mcp@latest
 ```
 
 MCP client config example:
@@ -13,7 +13,7 @@ MCP client config example:
   "mcpServers": {
     "codebase-mcp": {
       "command": "npx",
-      "args": ["-y", "codebase-mcp@latest"]
+      "args": ["-y", "@ndhkaeru/codebase-mcp@latest"]
     }
   }
 }

@@ -31,7 +31,7 @@ Everything runs on your machine. There is no external indexing service, no netwo
 **Run with npx:**
 
 ```bash
-npx -y codebase-mcp@latest
+npx -y @ndhkaeru/codebase-mcp@latest
 ```
 
 **Run with Docker:**
@@ -288,7 +288,7 @@ Use the release binary, npm wrapper, or Docker image as a `stdio` MCP server. On
   "mcpServers": {
     "codebase-mcp": {
       "command": "npx",
-      "args": ["-y", "codebase-mcp@latest"]
+      "args": ["-y", "@ndhkaeru/codebase-mcp@latest"]
     }
   }
 }
