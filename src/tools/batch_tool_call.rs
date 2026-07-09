@@ -1,0 +1,159 @@
+use anyhow::{Context, Result};
+use serde_json::{Value, json};
+use std::future::Future;
+use std::pin::Pin;
+use tokio::time::{Duration, timeout};
+
+const DEFAULT_SUBCALL_TIMEOUT_SECONDS: u64 = 60;
+const MAX_SUBCALL_TIMEOUT_SECONDS: u64 = 300;
+
+fn extract_text_payload(result: &Value) -> Option<&str> {
+    result
+        .get("content")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("text"))
+        .and_then(|v| v.as_str())
+}
+
+fn flatten_tool_result(result: Value) -> Result<Value> {
+    if result
+        .get("isError")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let message = extract_text_payload(&result)
+            .unwrap_or("Unknown tool error")
+            .to_string();
+        return Err(anyhow::anyhow!(message));
+    }
+
+    if let Some(text) = extract_text_payload(&result) {
+        return match serde_json::from_str::<Value>(text) {
+            Ok(parsed) => Ok(parsed),
+            Err(_) => Ok(json!({ "raw_text": text })),
+        };
+    }
+
+    Ok(result)
+}
+
+pub fn schema() -> Value {
+    json!({
+        "name": "batch_tool_call",
+        "title": "Batch tool calls",
+        "description": "Run a short sequence of codeloupe-mcp tools in one request when later calls depend on earlier results. Use to reduce round trips for read-only reconnaissance; maximum 20 calls and recursive batch_tool_call is rejected.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "calls": { "description": "Ordered list of tool calls to run sequentially. Maximum 20 calls per request.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool": { "type": "string", "description": "Tool name to call. batch_tool_call is not allowed recursively." },
+                            "args": { "type": "object", "description": "Arguments object for the selected tool." }
+                        },
+                        "required": ["tool", "args"]
+                    }
+                }
+            },
+            "required": ["calls"]
+        }
+    })
+}
+
+pub fn execute(args: &Value) -> Pin<Box<dyn Future<Output = Result<Value>> + '_>> {
+    Box::pin(async move {
+        let calls = args
+            .get("calls")
+            .and_then(|v| v.as_array())
+            .context("Missing 'calls' array")?;
+
+        if calls.is_empty() {
+            return Ok(json!({ "results": [], "total": 0 }));
+        }
+        if calls.len() > 20 {
+            return Err(anyhow::anyhow!(
+                "batch_tool_call accepts at most 20 calls per request"
+            ));
+        }
+
+        let mut results = Vec::with_capacity(calls.len());
+
+        for call in calls {
+            let tool_name = call
+                .get("tool")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            // Prevent recursive batch calls.
+            if tool_name == "batch_tool_call" {
+                results.push(json!({
+                    "tool": tool_name,
+                    "status": "error",
+                    "error": "Recursive batch_tool_call is not allowed"
+                }));
+                continue;
+            }
+
+            if !crate::security::rate_limiter::GLOBAL_LIMITER.allow() {
+                results.push(json!({
+                    "tool": tool_name,
+                    "status": "error",
+                    "error": "Rate limit exceeded (max 50 req/s)"
+                }));
+                continue;
+            }
+
+            let tool_args = call.get("args").cloned().unwrap_or(json!({}));
+
+            let params = json!({
+                "name": tool_name,
+                "arguments": tool_args
+            });
+
+            let timeout_seconds = tool_args
+                .get("timeout_seconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(DEFAULT_SUBCALL_TIMEOUT_SECONDS)
+                .clamp(1, MAX_SUBCALL_TIMEOUT_SECONDS);
+
+            match timeout(
+                Duration::from_secs(timeout_seconds),
+                super::call_tool_inner(params),
+            )
+            .await
+            {
+                Err(_) => results.push(json!({
+                    "tool": tool_name,
+                    "status": "error",
+                    "error": format!("Tool call timed out after {timeout_seconds}s")
+                })),
+                Ok(Err(e)) => results.push(json!({
+                    "tool": tool_name,
+                    "status": "error",
+                    "error": format!("{}", e)
+                })),
+                Ok(Ok(result)) => match flatten_tool_result(result) {
+                    Ok(flattened) => results.push(json!({
+                        "tool": tool_name,
+                        "status": "ok",
+                        "result": flattened
+                    })),
+                    Err(e) => results.push(json!({
+                        "tool": tool_name,
+                        "status": "error",
+                        "error": e.to_string()
+                    })),
+                },
+            }
+        }
+
+        Ok(json!({
+            "results": results,
+            "total": results.len()
+        }))
+    })
+}

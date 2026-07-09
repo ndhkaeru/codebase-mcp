@@ -1,0 +1,142 @@
+name: Rust
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly run (Mondays 00:00 UTC) so cargo audit/deny catch newly
+    # published advisories even when no code changes.
+    - cron: "0 0 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --release --locked
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Run cargo audit
+        run: cargo audit
+
+  deny:
+    name: Dependency Policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Run cargo deny
+        run: cargo deny check advisories bans licenses sources
+
+  npm-metadata:
+    name: NPM and MCP Metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Check npm launcher syntax
+        run: |
+          node --check packages/npm/bin/codeloupe-mcp.js
+          node --check packages/npm/scripts/prepare-npm-assets.js
+
+      - name: Validate MCP registry metadata
+        run: |
+          node - <<'NODE'
+          const pkg = require('./packages/npm/package.json');
+          const server = require('./server.json');
+          const mismatches = [];
+          if (server.name !== pkg.mcpName) mismatches.push(`server.name=${server.name} != package.mcpName=${pkg.mcpName}`);
+          if (server.version !== pkg.version) mismatches.push(`server.version=${server.version} != package.version=${pkg.version}`);
+          for (const packageEntry of server.packages || []) {
+            if (packageEntry.identifier === pkg.name && packageEntry.version !== pkg.version) {
+              mismatches.push(`server package ${packageEntry.identifier} version=${packageEntry.version} != package.version=${pkg.version}`);
+            }
+          }
+          if (mismatches.length) {
+            console.error('server.json is out of sync with packages/npm/package.json:');
+            for (const mismatch of mismatches) console.error(`  ${mismatch}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Check npm package shape
+        working-directory: packages/npm
+        run: npm pack --dry-run
+

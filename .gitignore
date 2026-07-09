@@ -1,0 +1,38 @@
+# Rust build artifacts
+/target/
+/debug/
+
+# Rustfmt backups
+**/*.rs.bk
+
+# Debug symbols and logs
+*.pdb
+*.log
+
+# Node/npm artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Release/package outputs
+/dist/
+/packages/npm/native/
+*.tgz
+
+# Local environment and editor state
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Local agent
+/.agents/

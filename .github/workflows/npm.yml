@@ -1,0 +1,166 @@
+name: Publish npm package
+run-name: Publish npm package for ${{ github.event.inputs.tag || github.ref_name }}
+
+on:
+  push:
+    tags:
+      - '**[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v1.0.0
+        required: true
+        type: string
+      publish_npm:
+        description: Publish the npm package
+        required: false
+        default: true
+        type: boolean
+      publish_registry:
+        description: Also publish server.json to the MCP Registry
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish @ndhkaeru/codeloupe-mcp
+    if: github.event_name == 'push' || inputs.publish_npm
+    runs-on: ubuntu-22.04
+    env:
+      HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Skip notice
+        if: env.HAS_NPM_TOKEN != 'true'
+        run: echo "NPM_TOKEN is not configured; skipping npm publish."
+
+      - name: Validate release tag and package version
+        if: env.HAS_NPM_TOKEN == 'true'
+        run: |
+          tag_version="${RELEASE_TAG#v}"
+          package_version="$(node -p "require('./packages/npm/package.json').version")"
+          if [ "${package_version}" != "${tag_version}" ]; then
+            echo "package version ${package_version} does not match release tag ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+      - name: Validate MCP registry metadata
+        if: env.HAS_NPM_TOKEN == 'true'
+        run: |
+          node - <<'NODE'
+          const pkg = require('./packages/npm/package.json');
+          const server = require('./server.json');
+          const mismatches = [];
+          if (server.version !== pkg.version) {
+            mismatches.push(`server.version=${server.version} != package.version=${pkg.version}`);
+          }
+          for (const packageEntry of server.packages || []) {
+            if (packageEntry.identifier === pkg.name && packageEntry.version !== pkg.version) {
+              mismatches.push(`server package ${packageEntry.identifier} version=${packageEntry.version} != package.version=${pkg.version}`);
+            }
+          }
+          if (server.name !== pkg.mcpName) {
+            mismatches.push(`server.name=${server.name} != package.mcpName=${pkg.mcpName}`);
+          }
+          if (mismatches.length) {
+            console.error('server.json is out of sync with packages/npm/package.json:');
+            for (const mismatch of mismatches) console.error(`  ${mismatch}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Wait for GitHub Release binary assets
+        if: env.HAS_NPM_TOKEN == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          query='(["codeloupe-mcp-aarch64-apple-darwin.tar.xz", "codeloupe-mcp-aarch64-pc-windows-msvc.zip", "codeloupe-mcp-aarch64-unknown-linux-gnu.tar.xz", "codeloupe-mcp-x86_64-apple-darwin.tar.xz", "codeloupe-mcp-x86_64-pc-windows-msvc.zip", "codeloupe-mcp-x86_64-unknown-linux-gnu.tar.xz"] as $required | [.assets[].name] as $names | all($required[]; . as $asset | $names | index($asset)))'
+          for i in {1..45}; do
+            if gh release view "${RELEASE_TAG}" --json assets --jq "${query}" | grep -q true; then
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "Required GitHub Release binary assets were not available in time" >&2
+          exit 1
+
+      - name: Prepare native npm assets
+        if: env.HAS_NPM_TOKEN == 'true'
+        working-directory: packages/npm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REF_NAME: ${{ env.RELEASE_TAG }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: npm run prepare:native
+
+      - name: Publish npm package
+        if: env.HAS_NPM_TOKEN == 'true'
+        working-directory: packages/npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish
+
+  publish-registry:
+    name: Publish MCP Registry metadata
+    if: |
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_registry &&
+      needs.publish.result != 'failure' &&
+      needs.publish.result != 'cancelled'
+    needs: publish
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Validate MCP registry metadata
+        run: |
+          node - <<'NODE'
+          const pkg = require('./packages/npm/package.json');
+          const server = require('./server.json');
+          const mismatches = [];
+          if (server.version !== pkg.version) mismatches.push(`server.version=${server.version} != package.version=${pkg.version}`);
+          if (server.name !== pkg.mcpName) mismatches.push(`server.name=${server.name} != package.mcpName=${pkg.mcpName}`);
+          for (const packageEntry of server.packages || []) {
+            if (packageEntry.identifier === pkg.name && packageEntry.version !== pkg.version) {
+              mismatches.push(`server package ${packageEntry.identifier} version=${packageEntry.version} != package.version=${pkg.version}`);
+            }
+          }
+          if (mismatches.length) {
+            console.error('server.json is out of sync with packages/npm/package.json:');
+            for (const mismatch of mismatches) console.error(`  ${mismatch}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+
+      - name: Authenticate with MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        run: ./mcp-publisher publish

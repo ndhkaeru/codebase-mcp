@@ -1,0 +1,353 @@
+use anyhow::{Context, Result};
+use encoding_rs::{UTF_16BE, UTF_16LE, WINDOWS_1252};
+use serde_json::{Value, json};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read};
+
+use crate::common::insert_object_field;
+
+pub fn schema() -> Value {
+    json!({
+        "name": "read_file_range",
+        "title": "Read file range",
+        "description": "Read one focused file range with encoding detection and truncation metadata. Use after search/path discovery; prefer line ranges over whole-file reads.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "File path to read. Relative paths resolve against the active workspace." },
+                "start_line": { "type": "integer", "description": "1-indexed inclusive start line. Defaults to 1." },
+                "end_line": { "type": "integer", "description": "1-indexed inclusive end line. Omit to read until max_lines/max_bytes or EOF." },
+                "max_lines": { "type": "integer", "description": "Maximum number of lines to return. Applied before/alongside max_bytes for bounded output." },
+                "max_bytes": { "type": "integer", "description": "Maximum UTF-8 output bytes to return. If both max_lines and max_bytes are set, output stops at the first limit reached." },
+                "include_line_numbers": { "type": "boolean", "description": "Prefix returned lines with 1-indexed line numbers when true. Defaults to false." }
+            },
+            "required": ["path"]
+        }
+    })
+}
+
+struct LimitedContent {
+    content: String,
+    returned_lines: usize,
+    truncated: bool,
+    omitted_lines: usize,
+    next_start_line: Option<usize>,
+    end_line: usize,
+}
+
+pub fn decode_fuzzy(buffer: &[u8]) -> (String, &'static str) {
+    if buffer.starts_with(&[0xFF, 0xFE]) {
+        let (cow, _, _) = UTF_16LE.decode(&buffer[2..]);
+        return (cow.into_owned(), "UTF-16LE");
+    }
+
+    if buffer.starts_with(&[0xFE, 0xFF]) {
+        let (cow, _, _) = UTF_16BE.decode(&buffer[2..]);
+        return (cow.into_owned(), "UTF-16BE");
+    }
+
+    match std::str::from_utf8(buffer) {
+        Ok(s) => (s.to_string(), "UTF-8"),
+        Err(_) => {
+            let (cow, encoding, _) = WINDOWS_1252.decode(buffer);
+            (cow.into_owned(), encoding.name())
+        }
+    }
+}
+
+pub(crate) fn has_utf16_bom(buffer: &[u8]) -> bool {
+    buffer.starts_with(&[0xFF, 0xFE]) || buffer.starts_with(&[0xFE, 0xFF])
+}
+
+pub(crate) fn is_probably_binary(buffer: &[u8]) -> bool {
+    !has_utf16_bom(buffer) && buffer.contains(&b'\x00')
+}
+
+pub(crate) fn count_text_lines(content: &str) -> usize {
+    if content.is_empty() {
+        return 0;
+    }
+
+    content.split_terminator('\n').count()
+}
+
+fn split_text_lines(content: &str) -> Vec<&str> {
+    if content.is_empty() {
+        Vec::new()
+    } else {
+        content.split_terminator('\n').collect()
+    }
+}
+
+pub async fn execute(args: &Value) -> Result<Value> {
+    execute_sync(args)
+}
+
+pub(crate) fn execute_sync(args: &Value) -> Result<Value> {
+    let path_str = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .context("Missing path")?;
+    let path = crate::common::resolve_tool_path(path_str);
+
+    if !path.exists() || !path.is_file() {
+        return Err(anyhow::anyhow!(
+            "File does not exist or is not a file: {}",
+            path_str
+        ));
+    }
+
+    let meta = std::fs::metadata(&path)?;
+    let size_mb = meta.len() / 1024 / 1024;
+    if size_mb > 10 {
+        return Err(anyhow::anyhow!(
+            "File is too large ({}MB > 10MB limit)",
+            size_mb
+        ));
+    }
+
+    let start_line = args.get("start_line").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+    let end_line = args
+        .get("end_line")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(u64::MAX) as usize;
+    let max_lines = args
+        .get("max_lines")
+        .and_then(|v| v.as_u64())
+        .map(|value| value as usize);
+    let max_bytes = args
+        .get("max_bytes")
+        .and_then(|v| v.as_u64())
+        .map(|value| value as usize);
+    let include_line_numbers = args
+        .get("include_line_numbers")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if start_line == 0 {
+        return Err(anyhow::anyhow!("start_line must be >= 1"));
+    }
+
+    let read_result = read_utf8_range_streaming(
+        &path,
+        start_line,
+        end_line,
+        include_line_numbers,
+        max_lines,
+        max_bytes,
+    )?
+    .unwrap_or_else(|| {
+        read_range_full_decode(
+            &path,
+            start_line,
+            end_line,
+            include_line_numbers,
+            max_lines,
+            max_bytes,
+        )
+    })?;
+
+    let mut response = json!({
+        "content": read_result.limited.content,
+        "start_line": read_result.start_line,
+        "end_line": read_result.limited.end_line,
+        "total_lines": read_result.total_lines,
+        "encoding": read_result.encoding,
+        "file_size_bytes": meta.len(),
+        "truncated": read_result.limited.truncated,
+        "omitted_lines": read_result.limited.omitted_lines,
+        "returned_lines": read_result.limited.returned_lines
+    });
+
+    if let Some(next_start_line) = read_result.limited.next_start_line {
+        insert_object_field(&mut response, "next_start_line", json!(next_start_line));
+    }
+
+    Ok(response)
+}
+
+struct ReadRangeResult {
+    limited: LimitedContent,
+    start_line: usize,
+    total_lines: usize,
+    encoding: &'static str,
+}
+
+fn read_utf8_range_streaming(
+    path: &std::path::Path,
+    start_line: usize,
+    end_line: usize,
+    include_line_numbers: bool,
+    max_lines: Option<usize>,
+    max_bytes: Option<usize>,
+) -> Result<Option<Result<ReadRangeResult>>> {
+    let mut probe = File::open(path)?;
+    let mut prefix = [0u8; 2];
+    let read = probe.read(&mut prefix)?;
+    if read >= 2 && (prefix == [0xFF, 0xFE] || prefix == [0xFE, 0xFF]) {
+        return Ok(None);
+    }
+
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut raw_line = Vec::new();
+    let mut selected = Vec::<String>::new();
+    let mut total_lines = 0usize;
+    let mut ends_with_newline = false;
+
+    loop {
+        raw_line.clear();
+        let bytes_read = reader.read_until(b'\n', &mut raw_line)?;
+        if bytes_read == 0 {
+            break;
+        }
+        total_lines += 1;
+        ends_with_newline = raw_line.ends_with(b"\n");
+
+        if total_lines < start_line || total_lines > end_line {
+            continue;
+        }
+
+        let line_bytes = if raw_line.ends_with(b"\n") {
+            let without_lf = &raw_line[..raw_line.len() - 1];
+            if without_lf.ends_with(b"\r") {
+                &without_lf[..without_lf.len() - 1]
+            } else {
+                without_lf
+            }
+        } else {
+            raw_line.as_slice()
+        };
+        let Ok(line) = std::str::from_utf8(line_bytes) else {
+            return Ok(None);
+        };
+        selected.push(line.to_string());
+    }
+
+    let actual_start = std::cmp::min(start_line - 1, total_lines) + 1;
+    let actual_end = std::cmp::min(end_line, total_lines);
+    let selected_refs = selected.iter().map(String::as_str).collect::<Vec<_>>();
+    let limited = apply_limits(
+        &selected_refs,
+        actual_start,
+        include_line_numbers,
+        max_lines,
+        max_bytes,
+        ends_with_newline && actual_end == total_lines,
+    );
+
+    Ok(Some(Ok(ReadRangeResult {
+        limited,
+        start_line: actual_start,
+        total_lines,
+        encoding: "UTF-8",
+    })))
+}
+
+fn read_range_full_decode(
+    path: &std::path::Path,
+    start_line: usize,
+    end_line: usize,
+    include_line_numbers: bool,
+    max_lines: Option<usize>,
+    max_bytes: Option<usize>,
+) -> Result<ReadRangeResult> {
+    let mut file = File::open(path)?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+
+    let (content, encoding) = decode_fuzzy(&buffer);
+    let lines = split_text_lines(&content);
+    let total_lines = lines.len();
+    let ends_with_newline = content.ends_with('\n');
+
+    let actual_start = std::cmp::min(start_line - 1, total_lines);
+    let actual_end = std::cmp::min(end_line, total_lines);
+    let selected_lines = &lines[actual_start..actual_end];
+    let limited = apply_limits(
+        selected_lines,
+        actual_start + 1,
+        include_line_numbers,
+        max_lines,
+        max_bytes,
+        ends_with_newline && actual_end == total_lines,
+    );
+
+    Ok(ReadRangeResult {
+        limited,
+        start_line: actual_start + 1,
+        total_lines,
+        encoding,
+    })
+}
+
+fn apply_limits(
+    lines: &[&str],
+    first_line_number: usize,
+    include_line_numbers: bool,
+    max_lines: Option<usize>,
+    max_bytes: Option<usize>,
+    append_terminal_newline: bool,
+) -> LimitedContent {
+    let line_limit = max_lines.unwrap_or(usize::MAX);
+    let byte_limit = max_bytes.unwrap_or(usize::MAX);
+    let mut rendered_lines = Vec::new();
+    let mut used_bytes = 0usize;
+
+    for (index, line) in lines.iter().enumerate() {
+        if rendered_lines.len() >= line_limit {
+            break;
+        }
+
+        let line_number = first_line_number + index;
+        let rendered = render_line(line_number, line, include_line_numbers);
+        let rendered_bytes = rendered.len();
+        let separator_bytes = if rendered_lines.is_empty() { 0 } else { 1 };
+
+        if used_bytes
+            .saturating_add(separator_bytes)
+            .saturating_add(rendered_bytes)
+            > byte_limit
+        {
+            break;
+        }
+
+        used_bytes += separator_bytes + rendered_bytes;
+        rendered_lines.push(rendered);
+    }
+
+    let returned_lines = rendered_lines.len();
+    let omitted_lines = lines.len().saturating_sub(returned_lines);
+    let truncated = omitted_lines > 0;
+    let next_start_line = if truncated {
+        Some(first_line_number + returned_lines)
+    } else {
+        None
+    };
+    let end_line = returned_lines
+        .checked_sub(1)
+        .map(|offset| first_line_number + offset)
+        .unwrap_or_else(|| first_line_number.saturating_sub(1));
+
+    let mut content = rendered_lines.join("\n");
+    if append_terminal_newline && !truncated && returned_lines > 0 {
+        content.push('\n');
+    }
+
+    LimitedContent {
+        content,
+        returned_lines,
+        truncated,
+        omitted_lines,
+        next_start_line,
+        end_line,
+    }
+}
+
+fn render_line(line_number: usize, line: &str, include_line_numbers: bool) -> String {
+    if include_line_numbers {
+        format!("{}: {}", line_number, line)
+    } else {
+        line.to_string()
+    }
+}

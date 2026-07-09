@@ -1,0 +1,77 @@
+[package]
+name = "codeloupe-mcp"
+version = "1.0.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Local-first MCP server for code search, code intelligence, repository comparison, and safe file edits"
+readme = "README.md"
+repository = "https://github.com/ndhkaeru/codeloupe-mcp"
+
+[dependencies]
+anyhow = "1.0.102"
+async-trait = "0.1.89"
+bytecount = "0.6.9"
+dashmap = "6.1.0"
+encoding_rs = "0.8.35"
+flate2 = "1.1.9"
+futures = "0.3.32"
+fuzzy-matcher = "0.3.7"
+glob = "0.3.3"
+grep-regex = "0.1.14"
+grep-searcher = "0.1.16"
+heed = "0.22.1"
+ignore = "0.4.25"
+lazy_static = "1.5.0"
+mcp-sdk = "0.0.3"
+regex = "1.12.3"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+similar = "3.1.1"
+tantivy = "0.26.1"
+tar = "0.4.46"
+tokio = { version = "1.49.0", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.22"
+tree-sitter = "0.26.6"
+tree-sitter-c = "0.24.2"
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-objc = "3.0.2"
+tree-sitter-php = "0.24.2"
+tree-sitter-python = "0.25.0"
+tree-sitter-ruby = "0.23.1"
+tree-sitter-rust = "0.24.0"
+tree-sitter-swift = "0.7.2"
+tree-sitter-typescript = "0.23.2"
+zip = "8.1.0"
+
+[dev-dependencies]
+tempfile = "3.26.0"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
+
+[workspace.metadata.dist]
+dist = true
+cargo-dist-version = "0.32.0"
+ci = "github"
+installers = []
+targets = [
+    "aarch64-apple-darwin",
+    "aarch64-pc-windows-msvc",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]

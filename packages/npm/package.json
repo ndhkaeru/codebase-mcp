@@ -1,0 +1,35 @@
+{
+  "name": "@ndhkaeru/codeloupe-mcp",
+  "version": "1.0.0",
+  "description": "Local-first MCP server for code search, code intelligence, repository comparison, and safe file edits",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ndhkaeru/codeloupe-mcp.git"
+  },
+  "homepage": "https://github.com/ndhkaeru/codeloupe-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/ndhkaeru/codeloupe-mcp/issues"
+  },
+  "type": "commonjs",
+  "bin": {
+    "codeloupe-mcp": "bin/codeloupe-mcp.js"
+  },
+  "files": [
+    "bin/",
+    "native/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepare:native": "node scripts/prepare-npm-assets.js",
+    "smoke": "node bin/codeloupe-mcp.js --version"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "mcpName": "io.github.ndhkaeru/codeloupe-mcp"
+}

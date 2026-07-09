@@ -1,0 +1,128 @@
+use anyhow::{Context, Result};
+use grep_regex::RegexMatcherBuilder;
+use grep_searcher::{BinaryDetection, SearcherBuilder, sinks::UTF8};
+use serde_json::{Value, json};
+use std::path::PathBuf;
+use tokio::task;
+
+use crate::tools::ast_support::visit_candidate_code_files;
+
+const MAX_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_RESULTS: usize = 200;
+
+pub fn schema() -> Value {
+    json!({
+        "name": "find_references",
+        "title": "Find references",
+        "description": "Find likely references to a symbol across code files using token-aware matching. Use after locating a definition to understand call sites or impact.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": { "type": "string", "description": "Symbol text/name to search for references. Uses token-aware text matching across candidate code files." },
+                "paths": { "type": "array", "items": { "type": "string" }, "description": "Search roots or files. Defaults to the active workspace. Scope this for large repositories." }
+            },
+            "required": ["symbol"]
+        }
+    })
+}
+
+pub async fn execute(args: &Value) -> Result<Value> {
+    let args_owned = args.clone();
+    task::spawn_blocking(move || execute_blocking(args_owned))
+        .await
+        .context("find_references background task failed to join")?
+}
+
+fn execute_blocking(args: Value) -> Result<Value> {
+    let symbol = args
+        .get("symbol")
+        .and_then(|v| v.as_str())
+        .context("Missing/empty symbol")?;
+
+    let search_paths: Vec<PathBuf> = args
+        .get("paths")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.as_str())
+                .map(crate::common::resolve_tool_path)
+                .collect()
+        })
+        .unwrap_or_else(|| vec![crate::common::default_tool_root()]);
+
+    if !search_paths.iter().any(|path| path.exists()) {
+        return Err(anyhow::anyhow!(
+            "No valid search path found for find_references"
+        ));
+    }
+
+    let pattern_str = format!(r"\b{}\b", regex::escape(symbol));
+    let matcher = RegexMatcherBuilder::new()
+        .build(&pattern_str)
+        .context("Invalid regex pattern")?;
+    let mut searcher = SearcherBuilder::new()
+        .binary_detection(BinaryDetection::quit(0))
+        .build();
+
+    let mut references = Vec::new();
+    let mut files_scanned = 0usize;
+    let mut files_skipped = 0usize;
+    let mut limit_reached = false;
+
+    visit_candidate_code_files(&search_paths, None, None, |candidate| {
+        if limit_reached {
+            return Ok(false);
+        }
+
+        let meta = match std::fs::metadata(candidate) {
+            Ok(meta) => meta,
+            Err(_) => {
+                files_skipped += 1;
+                return Ok(true);
+            }
+        };
+
+        if meta.len() > MAX_FILE_SIZE_BYTES {
+            files_skipped += 1;
+            return Ok(true);
+        }
+
+        files_scanned += 1;
+
+        let path_str = crate::common::normalize_display_path(candidate);
+        let search_result = searcher.search_path(
+            &matcher,
+            candidate,
+            UTF8(|line_num, line| {
+                references.push(json!({
+                    "file": path_str.clone(),
+                    "line": line_num,
+                    "snippet": line.trim()
+                }));
+
+                if references.len() >= MAX_RESULTS {
+                    limit_reached = true;
+                    Ok(false)
+                } else {
+                    Ok(true)
+                }
+            }),
+        );
+
+        if search_result.is_err() {
+            files_skipped += 1;
+        }
+
+        Ok(!limit_reached)
+    })?;
+
+    Ok(json!({
+        "symbol": symbol,
+        "references": references,
+        "total_returned": references.len(),
+        "files_scanned": files_scanned,
+        "files_skipped_non_code": files_skipped,
+        "limit_reached": limit_reached,
+        "limit_reason": if limit_reached { Some("max_results") } else { None }
+    }))
+}

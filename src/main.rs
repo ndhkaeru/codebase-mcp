@@ -1,0 +1,668 @@
+mod common;
+mod history;
+mod indexer;
+mod mcp;
+mod security;
+mod tools;
+mod version;
+
+use mcp::{JsonRpcRequest, JsonRpcResponse};
+use serde_json::{Value, json};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::sync::mpsc;
+use tokio::time::{Duration, Instant, timeout};
+use tracing::{Level, debug, error, info, warn};
+use version::SERVER_VERSION;
+
+const SERVER_NAME: &str = "codeloupe-mcp";
+const SERVER_INSTRUCTIONS: &str = "Use codeloupe-mcp when you need local repository context without loading whole files or trees. Start with project_map, workspace_stats, fuzzy_find, or compare_directories to understand scope; use server_health to check path/content index status in large repos; warm scoped content zones before repeated literal searches; then use text_search with the narrowest paths/includes possible and read_file_range, read_snippets, or read_symbol_body for focused evidence. Prefer symbol tools for definitions, references, imports/exports, and call graphs before editing. Prefer literal text_search so the content index can shortlist files; inspect search_strategy, fallback_reason, content_index_used, content_index_partial, content_index_zones, and warming_zones. Avoid workspace-root searches in large repos unless allow_expensive_fallback=true is intentional. For edits, use create_file/create_directory/edit_file/delete_file with exact paths and verify with focused reads or tests. Paths should be absolute or workspace-relative to the active client workspace.";
+/// Default timeout for one tool call (seconds).
+const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 60;
+/// Maximum timeout a client can request for one tool call (seconds).
+const MAX_TOOL_TIMEOUT_SECS: u64 = 10 * 60;
+static INDEX_ROOTS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TransportMode {
+    /// Legacy mode: one JSON message per line.
+    Line,
+    /// MCP stdio framing mode: Content-Length + JSON body.
+    Framed,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let log_level = Level::INFO;
+
+    tracing_subscriber::fmt()
+        .with_writer(io::stderr)
+        .with_max_level(log_level)
+        .with_target(false)
+        .init();
+
+    info!(
+        "{} v{} starting (log_level={:?})",
+        SERVER_NAME, SERVER_VERSION, log_level
+    );
+
+    // Force-init START_TIME.
+    lazy_static::initialize(&tools::server_health::START_TIME);
+
+    let stdin = tokio::io::stdin();
+    let mut reader = BufReader::new(stdin);
+    let (response_tx, mut response_rx) = mpsc::unbounded_channel::<QueuedResponse>();
+    let writer_handle = tokio::task::spawn_blocking(move || {
+        let mut stdout = io::stdout();
+        while let Some(queued) = response_rx.blocking_recv() {
+            match write_response(&mut stdout, &queued.response, queued.transport_mode) {
+                Ok(out_bytes) => debug!(req = queued.request_number, bytes = out_bytes, "-> send"),
+                Err(err) => {
+                    error!(req = queued.request_number, error = %err, "response write failed")
+                }
+            }
+        }
+    });
+    let mut line_buf = String::new();
+    let mut body_buf = Vec::new();
+    let mut request_count: u64 = 0;
+
+    info!("Ready - waiting for JSON-RPC on stdin");
+
+    loop {
+        let (raw_request, transport_mode, bytes_read) =
+            match read_next_message(&mut reader, &mut line_buf, &mut body_buf).await? {
+                Some(v) => v,
+                None => {
+                    info!("EOF on stdin, shutting down");
+                    break;
+                }
+            };
+
+        request_count += 1;
+        debug!(req = request_count, bytes = bytes_read, "<- recv");
+
+        let req: Result<JsonRpcRequest, _> = serde_json::from_str(&raw_request);
+        match req {
+            Ok(request) => {
+                let id = request.id.clone().unwrap_or(serde_json::Value::Null);
+                let method = request.method.clone();
+                debug!(req = request_count, method = %method, "dispatching");
+
+                let response = match method.as_str() {
+                    "initialize" => {
+                        if let Some(params) = &request.params {
+                            maybe_set_index_roots(params);
+                        }
+                        info!("Client initialized");
+                        JsonRpcResponse::success(
+                            id,
+                            json!({
+                                "protocolVersion": "2024-11-05",
+                                "serverInfo": {
+                                    "name": SERVER_NAME,
+                                    "version": SERVER_VERSION
+                                },
+                                "capabilities": {
+                                    "tools": {}
+                                },
+                                "instructions": SERVER_INSTRUCTIONS
+                            }),
+                        )
+                    }
+                    "notifications/initialized" => {
+                        start_indexer_if_needed();
+                        debug!("notifications/initialized - indexer triggered");
+                        continue;
+                    }
+                    "tools/list" => {
+                        let tools = tools::list_tools();
+                        debug!(count = tools.len(), "tools/list");
+                        JsonRpcResponse::success(id, json!({ "tools": tools }))
+                    }
+                    "tools/call" => {
+                        if !security::rate_limiter::GLOBAL_LIMITER.allow() {
+                            warn!("Rate limit exceeded");
+                            JsonRpcResponse::error(id, -32000, "Rate limit exceeded (max 50 req/s)")
+                        } else {
+                            let params = request.params.unwrap_or(json!({}));
+                            let tool_name = params
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let tool_timeout_secs = tool_call_timeout_secs(&params);
+                            maybe_index_tool_workspaces(&tool_name, &params);
+                            let tx = response_tx.clone();
+                            tokio::spawn(async move {
+                                let response =
+                                    run_tool_call(id, params, tool_name, tool_timeout_secs).await;
+                                let _ = tx.send(QueuedResponse {
+                                    request_number: request_count,
+                                    transport_mode,
+                                    response,
+                                });
+                            });
+                            continue;
+                        }
+                    }
+                    "resources/list" => JsonRpcResponse::success(id, json!({ "resources": [] })),
+                    "resources/templates/list" => {
+                        JsonRpcResponse::success(id, json!({ "resourceTemplates": [] }))
+                    }
+                    "prompts/list" => JsonRpcResponse::success(id, json!({ "prompts": [] })),
+                    _ => {
+                        warn!(method = %method, "Unknown method");
+                        JsonRpcResponse::error(id, -32601, "Method not found")
+                    }
+                };
+
+                response_tx.send(QueuedResponse {
+                    request_number: request_count,
+                    transport_mode,
+                    response,
+                })?;
+            }
+            Err(e) => {
+                error!(error = %e, raw_len = raw_request.len(), "Parse error");
+                let err = JsonRpcResponse::error(serde_json::Value::Null, -32700, "Parse error");
+                response_tx.send(QueuedResponse {
+                    request_number: request_count,
+                    transport_mode,
+                    response: err,
+                })?;
+            }
+        }
+    }
+
+    drop(response_tx);
+    if let Err(err) = writer_handle.await {
+        error!(error = %err, "response writer failed to join");
+    }
+
+    info!(total_requests = request_count, "Server shutdown");
+    Ok(())
+}
+
+struct QueuedResponse {
+    request_number: u64,
+    transport_mode: TransportMode,
+    response: JsonRpcResponse,
+}
+
+async fn run_tool_call(
+    id: Value,
+    params: Value,
+    tool_name: String,
+    tool_timeout_secs: u64,
+) -> JsonRpcResponse {
+    debug!(
+        tool = %tool_name,
+        timeout_s = tool_timeout_secs,
+        "-> tool call start"
+    );
+    let start = Instant::now();
+
+    match timeout(
+        Duration::from_secs(tool_timeout_secs),
+        tools::call_tool(params),
+    )
+    .await
+    {
+        Ok(Ok(result)) => {
+            let elapsed = start.elapsed();
+            debug!(
+                tool = %tool_name,
+                elapsed_ms = elapsed.as_millis() as u64,
+                "OK tool call"
+            );
+            if elapsed.as_millis() > 5000 {
+                warn!(
+                    tool = %tool_name,
+                    elapsed_ms = elapsed.as_millis() as u64,
+                    "SLOW tool call (>5s)"
+                );
+            }
+            JsonRpcResponse::success(id, result)
+        }
+        Ok(Err(e)) => {
+            error!(
+                tool = %tool_name,
+                error = %e,
+                elapsed_ms = start.elapsed().as_millis() as u64,
+                "tool call error"
+            );
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "isError": true,
+                    "content": [{
+                        "type": "text",
+                        "text": format!("Error: {}", e)
+                    }]
+                }),
+            )
+        }
+        Err(_) => {
+            error!(
+                tool = %tool_name,
+                timeout_s = tool_timeout_secs,
+                "tool call timeout"
+            );
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "isError": true,
+                    "content": [{
+                        "type": "text",
+                        "text": format!(
+                            "Tool '{}' timed out after {}s. Try narrowing the search scope or using includes/excludes filters.",
+                            tool_name, tool_timeout_secs
+                        )
+                    }]
+                }),
+            )
+        }
+    }
+}
+
+fn parse_content_length_header(line: &str) -> Option<usize> {
+    let (name, value) = line.split_once(':')?;
+    if !name.trim().eq_ignore_ascii_case("content-length") {
+        return None;
+    }
+    value.trim().parse::<usize>().ok()
+}
+
+async fn read_next_message(
+    reader: &mut BufReader<tokio::io::Stdin>,
+    line_buf: &mut String,
+    body_buf: &mut Vec<u8>,
+) -> anyhow::Result<Option<(String, TransportMode, usize)>> {
+    loop {
+        line_buf.clear();
+        let n = reader.read_line(line_buf).await?;
+        if n == 0 {
+            return Ok(None);
+        }
+
+        if line_buf.trim().is_empty() {
+            continue;
+        }
+
+        let trimmed = line_buf.trim_start();
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            return Ok(Some((line_buf.clone(), TransportMode::Line, n)));
+        }
+
+        // Not JSON start; try MCP framed headers.
+        if !line_buf.contains(':') {
+            // Unknown line format, let parser handle it as line mode.
+            return Ok(Some((line_buf.clone(), TransportMode::Line, n)));
+        }
+
+        let mut content_length = parse_content_length_header(line_buf);
+        let mut header_bytes = n;
+
+        loop {
+            line_buf.clear();
+            let h = reader.read_line(line_buf).await?;
+            if h == 0 {
+                return Err(anyhow::anyhow!(
+                    "Unexpected EOF while reading MCP framed headers"
+                ));
+            }
+            header_bytes += h;
+
+            if line_buf == "\n" || line_buf == "\r\n" {
+                break;
+            }
+
+            if content_length.is_none() {
+                content_length = parse_content_length_header(line_buf);
+            }
+        }
+
+        let len = content_length
+            .ok_or_else(|| anyhow::anyhow!("Missing Content-Length header in MCP frame"))?;
+
+        body_buf.resize(len, 0);
+        reader.read_exact(body_buf).await?;
+
+        let body = std::str::from_utf8(body_buf)
+            .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in framed payload: {}", e))?
+            .to_string();
+
+        return Ok(Some((body, TransportMode::Framed, header_bytes + len)));
+    }
+}
+
+fn write_response(
+    stdout: &mut io::Stdout,
+    response: &JsonRpcResponse,
+    mode: TransportMode,
+) -> anyhow::Result<usize> {
+    let out = serde_json::to_string(response)?;
+    match mode {
+        TransportMode::Framed => {
+            let header = format!("Content-Length: {}\r\n\r\n", out.len());
+            write!(stdout, "{}{}", header, out)?;
+            stdout.flush()?;
+            Ok(header.len() + out.len())
+        }
+        TransportMode::Line => {
+            writeln!(stdout, "{}", out)?;
+            stdout.flush()?;
+            Ok(out.len() + 1)
+        }
+    }
+}
+
+fn maybe_set_index_roots(params: &serde_json::Value) {
+    if INDEX_ROOTS.get().is_some() {
+        return;
+    }
+
+    let roots = extract_index_roots(params);
+    if roots.is_empty() {
+        return;
+    }
+
+    if INDEX_ROOTS.set(roots.clone()).is_ok() {
+        info!(
+            workspace_count = roots.len(),
+            "Captured client workspace roots for background indexer"
+        );
+    }
+}
+
+fn extract_index_roots(params: &serde_json::Value) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Some(ws_root) = params
+        .get("clientInfo")
+        .and_then(|v| v.get("workspaceRoot"))
+        .and_then(|v| v.as_str())
+    {
+        push_unique_root(&mut roots, common::path_from_input(ws_root));
+    }
+
+    if let Some(root_entries) = params.get("roots").and_then(|v| v.as_array()) {
+        for root in root_entries {
+            if let Some(uri) = root.get("uri").and_then(|v| v.as_str())
+                && let Some(path) = uri_to_path(uri)
+            {
+                push_unique_root(&mut roots, path);
+            }
+        }
+    }
+
+    if let Some(root_uri) = params.get("rootUri").and_then(|v| v.as_str())
+        && let Some(path) = uri_to_path(root_uri)
+    {
+        push_unique_root(&mut roots, path);
+    }
+
+    if let Some(workspace_folders) = params.get("workspaceFolders").and_then(|v| v.as_array()) {
+        for folder in workspace_folders {
+            if let Some(uri) = folder.get("uri").and_then(|v| v.as_str())
+                && let Some(path) = uri_to_path(uri)
+            {
+                push_unique_root(&mut roots, path);
+            }
+        }
+    }
+
+    roots
+        .into_iter()
+        .filter(|path| path.exists() && path.is_dir())
+        .collect()
+}
+
+fn uri_to_path(uri: &str) -> Option<PathBuf> {
+    if let Some(path) = common::uri_to_path(uri) {
+        return Some(path);
+    }
+    if !uri.contains("://") {
+        return Some(PathBuf::from(uri));
+    }
+
+    None
+}
+
+fn start_indexer_if_needed() {
+    if let Some(roots) = INDEX_ROOTS.get()
+        && !roots.is_empty()
+    {
+        for root in roots {
+            info!(
+                root = %root.display(),
+                "Starting background indexer on client workspace root"
+            );
+            indexer::ensure_workspace_index(root.clone(), "client_initialize".to_string());
+        }
+        return;
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        if looks_like_workspace_root(&current_dir) {
+            warn!(
+                root = %current_dir.display(),
+                "No workspace root provided by client; falling back to current_dir() for background indexer"
+            );
+            indexer::ensure_workspace_index(current_dir, "process_current_dir".to_string());
+            return;
+        }
+
+        warn!(
+            root = %current_dir.display(),
+            "No workspace root provided by client; skipping current_dir() fallback because it does not look like a workspace root"
+        );
+    }
+
+    warn!("No workspace root provided by client; background indexer remains disabled");
+}
+
+fn maybe_index_tool_workspaces(tool_name: &str, params: &Value) {
+    let arguments = match params.get("arguments") {
+        Some(arguments) => arguments,
+        None => return,
+    };
+
+    let roots = infer_workspace_roots_from_tool_arguments(arguments);
+    for root in roots {
+        indexer::ensure_workspace_index(root, format!("tool_call:{}", tool_name));
+    }
+}
+
+fn infer_workspace_roots_from_tool_arguments(arguments: &Value) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    collect_workspace_roots(arguments, None, &mut roots);
+
+    let mut inferred = Vec::new();
+    for candidate in roots {
+        if let Some(workspace_root) = discover_workspace_root_for_path(&candidate) {
+            push_unique_root(&mut inferred, workspace_root);
+        }
+    }
+
+    inferred
+}
+
+fn collect_workspace_roots(value: &Value, parent_key: Option<&str>, roots: &mut Vec<PathBuf>) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                collect_workspace_roots(child, Some(key.as_str()), roots);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_workspace_roots(item, parent_key, roots);
+            }
+        }
+        Value::String(raw) => {
+            if parent_key.is_some_and(is_workspace_path_key)
+                && let Some(candidate) = resolve_tool_path_candidate(raw)
+            {
+                roots.push(candidate);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_workspace_path_key(key: &str) -> bool {
+    matches!(
+        key,
+        "path"
+            | "paths"
+            | "file_path"
+            | "repo_path"
+            | "archive_path"
+            | "input_file"
+            | "output_file"
+            | "file_hint"
+    )
+}
+
+fn resolve_tool_path_candidate(raw: &str) -> Option<PathBuf> {
+    if raw.is_empty() {
+        return None;
+    }
+
+    existing_anchor_for_path(common::resolve_tool_path(raw))
+}
+
+fn existing_anchor_for_path(path: PathBuf) -> Option<PathBuf> {
+    let mut current = path.as_path();
+    while !current.exists() {
+        current = current.parent()?;
+    }
+
+    Some(canonicalize_existing_path(current))
+}
+
+fn discover_workspace_root_for_path(path: &Path) -> Option<PathBuf> {
+    if let Some(indexed_root) = indexer::indexed_workspace_root_for_path(path) {
+        return Some(indexed_root);
+    }
+
+    let mut current = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()?.to_path_buf()
+    };
+
+    loop {
+        if looks_like_workspace_root(&current) {
+            return Some(current);
+        }
+
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent.to_path_buf();
+    }
+
+    if path.is_dir() {
+        Some(path.to_path_buf())
+    } else {
+        path.parent().map(PathBuf::from)
+    }
+}
+
+fn canonicalize_existing_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn push_unique_root(roots: &mut Vec<PathBuf>, candidate: PathBuf) {
+    let candidate_key = normalize_root_key(&candidate);
+    if roots
+        .iter()
+        .any(|existing| normalize_root_key(existing) == candidate_key)
+    {
+        return;
+    }
+
+    roots.push(candidate);
+}
+
+fn normalize_root_key(path: &Path) -> String {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    #[cfg(windows)]
+    {
+        normalized.to_ascii_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        normalized
+    }
+}
+
+fn tool_call_timeout_secs(params: &Value) -> u64 {
+    let requested_seconds = params.get("timeout_seconds").and_then(Value::as_u64);
+
+    requested_seconds
+        .unwrap_or(DEFAULT_TOOL_TIMEOUT_SECS)
+        .clamp(DEFAULT_TOOL_TIMEOUT_SECS, MAX_TOOL_TIMEOUT_SECS)
+}
+
+fn looks_like_workspace_root(path: &Path) -> bool {
+    if !path.exists() || !path.is_dir() {
+        return false;
+    }
+
+    const WORKSPACE_MARKERS: &[&str] = &[
+        ".git",
+        "Cargo.toml",
+        "package.json",
+        "pnpm-workspace.yaml",
+        "yarn.lock",
+        "package-lock.json",
+        "pyproject.toml",
+        "requirements.txt",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "settings.gradle",
+        "WORKSPACE",
+        "WORKSPACE.bazel",
+        ".hg",
+        ".svn",
+    ];
+
+    WORKSPACE_MARKERS
+        .iter()
+        .any(|marker| path.join(marker).exists())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn tool_timeout_defaults_to_sixty_seconds() {
+        assert_eq!(tool_call_timeout_secs(&json!({})), 60);
+    }
+
+    #[test]
+    fn tool_timeout_can_be_extended_and_is_capped() {
+        assert_eq!(
+            tool_call_timeout_secs(&json!({"timeout_seconds": 120})),
+            120
+        );
+        assert_eq!(
+            tool_call_timeout_secs(&json!({"timeout_seconds": 900})),
+            600
+        );
+    }
+
+    #[test]
+    fn tool_timeout_cannot_reduce_default() {
+        assert_eq!(tool_call_timeout_secs(&json!({"timeout_seconds": 10})), 60);
+    }
+}
